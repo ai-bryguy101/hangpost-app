@@ -91,6 +91,7 @@ To align with your product direction:
 
 - Most profiles will have **no mutual friends** and are ranked by the standard weighted criteria.
 - Profiles that **do** have mutual friends receive a distinct `friend_common_boost` and are prioritized in final sorting.
+- Age compatibility now uses a sequential step-down ladder: same age = 1.0, 1 year apart = 0.9, 2 years = 0.8, ... 10+ years = 0.0.
 - This gives you a two-lane ranking system: (1) socially connected candidates first, then (2) everyone else ranked by compatibility signals.
 
 ## Test data
@@ -102,3 +103,14 @@ A seed CSV with profile records for ranking experiments is available at:
 Columns are ordered by your stated priority: friends in common, age closeness, college, hometown, degree, job, homestate, hobbies/activities/sports/games/skills/certifications, interests/likes, fan-of categories, faith/religion, and travel.
 
 Mutual friends now act as a separate high-priority ranking signal: profiles with friend overlap receive a social boost and are sorted ahead of profiles with no friend overlap.
+
+
+## Learning-friendly code style
+
+This project is intentionally written with beginner-friendly comments and explicit naming so you can learn as you read.
+
+When adding new code, prefer:
+- clear docstrings
+- step-by-step comments for non-obvious logic
+- explainable score breakdowns over hidden “magic” behavior
+
