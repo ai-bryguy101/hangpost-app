@@ -58,6 +58,22 @@ python examples/demo.py
 
 ---
 
+
+
+### Run a random 10-profile ranking sample
+
+In Codespaces (or any shell), you can quickly run a random ranking experiment from the CSV:
+
+```bash
+python examples/random_sample_ranking.py --sample-size 10
+```
+
+Use a seed for reproducible results:
+
+```bash
+python examples/random_sample_ranking.py --sample-size 10 --seed 42
+```
+
 ## Suggested next steps
 
 1. Add profile text embeddings (`bio_embedding_similarity`) to the score breakdown.
