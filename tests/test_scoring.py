@@ -49,3 +49,42 @@ def test_default_weights_prioritize_mutual_friends_then_age() -> None:
 
     assert weights.mutual_friends > weights.age_compatibility
     assert weights.age_compatibility > weights.interest_overlap
+
+
+def test_mutual_friends_get_social_boost_and_priority() -> None:
+    source = UserProfile(
+        user_id="source",
+        interests={"hiking", "coding"},
+        liked_topics={"tech", "travel"},
+        location="austin",
+        age=30,
+        mutual_friend_ids={"f1", "f2", "f3"},
+    )
+
+    no_mutual_but_compatible = UserProfile(
+        user_id="no_mutual",
+        interests={"hiking", "coding"},
+        liked_topics={"tech", "travel"},
+        location="austin",
+        age=30,
+        mutual_friend_ids=set(),
+    )
+
+    has_mutual_less_compatible = UserProfile(
+        user_id="with_mutual",
+        interests={"gaming"},
+        liked_topics={"esports"},
+        location="seattle",
+        age=39,
+        mutual_friend_ids={"f2"},
+    )
+
+    scored_no_mutual = compute_match_score(source, no_mutual_but_compatible)
+    scored_mutual = compute_match_score(source, has_mutual_less_compatible)
+
+    assert scored_no_mutual.has_mutual_friends is False
+    assert scored_mutual.has_mutual_friends is True
+    assert scored_mutual.social_boost > 0.0
+
+    ranked = rank_candidates(source, [no_mutual_but_compatible, has_mutual_less_compatible])
+    assert ranked[0][0].user_id == "with_mutual"
