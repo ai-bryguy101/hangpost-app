@@ -74,6 +74,10 @@ Use a seed for reproducible results:
 python examples/random_sample_ranking.py --sample-size 10 --seed 42
 ```
 
+
+If AgeComp looks low/zero in a run, use a fixed seed and inspect the printed `CandAge` + `AgeGap` columns.
+A gap of 10+ years now intentionally maps to `AgeComp = 0.0` in the current ladder rule.
+
 ## Suggested next steps
 
 1. Add profile text embeddings (`bio_embedding_similarity`) to the score breakdown.
