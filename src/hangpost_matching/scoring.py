@@ -38,11 +38,14 @@ def compute_match_score(
 
     interest_overlap = _jaccard_similarity(source.interests, candidate.interests)
     liked_topic_overlap = _jaccard_similarity(source.liked_topics, candidate.liked_topics)
-    mutual_friends = _bounded_ratio(len(source.mutual_friend_ids & candidate.mutual_friend_ids), 20)
+    mutual_friend_count = len(source.mutual_friend_ids & candidate.mutual_friend_ids)
+    mutual_friends = _bounded_ratio(mutual_friend_count, 20)
+    has_mutual_friends = mutual_friend_count > 0
+
     location_match = _location_score(source, candidate)
     age_compatibility = _age_compatibility_score(source, candidate)
 
-    total_score = (
+    base_score = (
         active_weights.interest_overlap * interest_overlap
         + active_weights.liked_topic_overlap * liked_topic_overlap
         + active_weights.mutual_friends * mutual_friends
@@ -50,8 +53,13 @@ def compute_match_score(
         + active_weights.age_compatibility * age_compatibility
     )
 
+    social_boost = active_weights.friend_common_boost if has_mutual_friends else 0.0
+    total_score = min(base_score + social_boost, 1.0)
+
     return MatchBreakdown(
         total_score=round(total_score, 6),
+        has_mutual_friends=has_mutual_friends,
+        social_boost=round(social_boost, 6),
         interest_overlap=round(interest_overlap, 6),
         liked_topic_overlap=round(liked_topic_overlap, 6),
         mutual_friends=round(mutual_friends, 6),
@@ -66,4 +74,8 @@ def rank_candidates(
     weights: ScoringWeights | None = None,
 ) -> list[tuple[UserProfile, MatchBreakdown]]:
     scored = [(candidate, compute_match_score(source, candidate, weights)) for candidate in candidates]
-    return sorted(scored, key=lambda item: item[1].total_score, reverse=True)
+    return sorted(
+        scored,
+        key=lambda item: (item[1].has_mutual_friends, item[1].total_score),
+        reverse=True,
+    )
