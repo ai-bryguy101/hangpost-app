@@ -18,11 +18,14 @@ class ScoringWeights:
     mutual_friends: float = 0.30
     location_match: float = 0.10
     age_compatibility: float = 0.25
+    friend_common_boost: float = 0.35
 
 
 @dataclass(frozen=True)
 class MatchBreakdown:
     total_score: float
+    has_mutual_friends: bool
+    social_boost: float
     interest_overlap: float
     liked_topic_overlap: float
     mutual_friends: float
