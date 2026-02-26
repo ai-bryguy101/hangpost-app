@@ -88,3 +88,17 @@ def test_mutual_friends_get_social_boost_and_priority() -> None:
 
     ranked = rank_candidates(source, [no_mutual_but_compatible, has_mutual_less_compatible])
     assert ranked[0][0].user_id == "with_mutual"
+
+
+def test_age_compatibility_uses_10_percent_step_down_per_year() -> None:
+    source = UserProfile(user_id="source", age=30)
+
+    same_age = UserProfile(user_id="same", age=30)
+    one_year_apart = UserProfile(user_id="one", age=29)
+    two_years_apart = UserProfile(user_id="two", age=28)
+    ten_years_apart = UserProfile(user_id="ten", age=20)
+
+    assert compute_match_score(source, same_age).age_compatibility == 1.0
+    assert compute_match_score(source, one_year_apart).age_compatibility == 0.9
+    assert compute_match_score(source, two_years_apart).age_compatibility == 0.8
+    assert compute_match_score(source, ten_years_apart).age_compatibility == 0.0
