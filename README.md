@@ -67,6 +67,16 @@ python examples/demo.py
    - acceptance rate@k
 4. Later: train a learning-to-rank model once label volume is sufficient.
 
+
+
+## Ranking behavior update
+
+To align with your product direction:
+
+- Most profiles will have **no mutual friends** and are ranked by the standard weighted criteria.
+- Profiles that **do** have mutual friends receive a distinct `friend_common_boost` and are prioritized in final sorting.
+- This gives you a two-lane ranking system: (1) socially connected candidates first, then (2) everyone else ranked by compatibility signals.
+
 ## Test data
 
 A seed CSV with profile records for ranking experiments is available at:
@@ -74,3 +84,5 @@ A seed CSV with profile records for ranking experiments is available at:
 - `data/test_profiles.csv`
 
 Columns are ordered by your stated priority: friends in common, age closeness, college, hometown, degree, job, homestate, hobbies/activities/sports/games/skills/certifications, interests/likes, fan-of categories, faith/religion, and travel.
+
+Mutual friends now act as a separate high-priority ranking signal: profiles with friend overlap receive a social boost and are sorted ahead of profiles with no friend overlap.
