@@ -9,6 +9,23 @@ This file only defines *data shapes* (no ranking logic):
 from dataclasses import dataclass, field
 
 
+def _validate_age(age: int | None) -> None:
+    """Raise ValueError if age is present but invalid."""
+    if age is not None:
+        if not isinstance(age, int):
+            raise TypeError(f"age must be an int or None, got {type(age).__name__}")
+        if age < 0 or age > 150:
+            raise ValueError(f"age must be between 0 and 150, got {age}")
+
+
+def _validate_user_id(user_id: str) -> None:
+    """Raise ValueError if user_id is empty or not a string."""
+    if not isinstance(user_id, str):
+        raise TypeError(f"user_id must be a str, got {type(user_id).__name__}")
+    if not user_id.strip():
+        raise ValueError("user_id must not be empty or whitespace-only")
+
+
 @dataclass(frozen=True)
 class UserProfile:
     """Normalized profile fields used by the ranking logic.
@@ -38,6 +55,11 @@ class UserProfile:
     # IDs representing social graph overlap.
     # Any intersection with another profile indicates mutual friends.
     mutual_friend_ids: set[str] = field(default_factory=set)
+
+    def __post_init__(self) -> None:
+        """Validate fields after initialization."""
+        _validate_user_id(self.user_id)
+        _validate_age(self.age)
 
 
 @dataclass(frozen=True)

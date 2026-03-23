@@ -10,33 +10,8 @@ SRC_PATH = REPO_ROOT / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
-from hangpost_matching import UserProfile, rank_candidates
-
-
-def _tokenize(cell: str) -> set[str]:
-    """Split semicolon-separated text into lowercase tokens."""
-    return {token.strip().lower() for token in cell.split(';') if token.strip()}
-
-
-def _profile_from_row(index: int, row: dict[str, str]) -> UserProfile:
-    """Convert one CSV row into the internal UserProfile model.
-
-    Beginner note:
-    `friends_in_common` in the CSV is a count, but the scoring model expects a
-    set of IDs so it can compute intersections. We synthesize fake IDs like
-    common_friend_1, common_friend_2, ... based on that count.
-    """
-    friend_count = int(row["friends_in_common"])
-    mutual_friend_ids = {f"common_friend_{i}" for i in range(1, friend_count + 1)}
-
-    return UserProfile(
-        user_id=f"csv_{index}_{row['name'].lower().replace(' ', '_')}",
-        interests=_tokenize(row["hobbies_activities_sports_games_skills_certifications"]),
-        liked_topics=_tokenize(row["interests_likes"]),
-        location=row["hometown"].strip().lower() or None,
-        age=int(row["age"]),
-        mutual_friend_ids=mutual_friend_ids,
-    )
+from hangpost_matching import rank_candidates
+from hangpost_matching.loader import profile_from_row
 
 
 def run_sample(csv_path: Path, sample_size: int, seed: int | None = None) -> None:
@@ -53,7 +28,7 @@ def run_sample(csv_path: Path, sample_size: int, seed: int | None = None) -> Non
         raise ValueError(f"sample_size={sample_size} exceeds row count={len(rows)}")
 
     sampled_rows = random.sample(rows, sample_size)
-    profiles = [_profile_from_row(i, row) for i, row in enumerate(sampled_rows)]
+    profiles = [profile_from_row(i, row) for i, row in enumerate(sampled_rows)]
     profile_name_by_id = {profile.user_id: row['name'] for profile, row in zip(profiles, sampled_rows)}
     row_by_id = {profile.user_id: row for profile, row in zip(profiles, sampled_rows)}
 

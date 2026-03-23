@@ -11,6 +11,11 @@ High-level flow:
 
 from .models import MatchBreakdown, ScoringWeights, UserProfile
 
+# Maximum mutual-friend count used for normalization. Profiles with this many
+# (or more) mutual friends receive the maximum mutual-friends component score
+# of 1.0. Adjust this if your social graph typically has denser connections.
+MAX_MUTUAL_FRIENDS = 20
+
 
 def _jaccard_similarity(left: set[str], right: set[str]) -> float:
     """Return overlap ratio between two sets using Jaccard similarity.
@@ -36,8 +41,12 @@ def _bounded_ratio(value: float, max_value: float) -> float:
 
 
 def _location_score(source: UserProfile, candidate: UserProfile) -> float:
-    """Simple exact-match location score."""
-    if source.location and candidate.location and source.location == candidate.location:
+    """Case-insensitive exact-match location score."""
+    if (
+        source.location
+        and candidate.location
+        and source.location.strip().lower() == candidate.location.strip().lower()
+    ):
         return 1.0
     return 0.0
 
@@ -82,7 +91,7 @@ def compute_match_score(
     # - normalized ratio (for weighted base score)
     # - boolean trigger (for separate social-boost lane)
     mutual_friend_count = len(source.mutual_friend_ids & candidate.mutual_friend_ids)
-    mutual_friends = _bounded_ratio(mutual_friend_count, 20)
+    mutual_friends = _bounded_ratio(mutual_friend_count, MAX_MUTUAL_FRIENDS)
     has_mutual_friends = mutual_friend_count > 0
 
     location_match = _location_score(source, candidate)
