@@ -58,7 +58,7 @@ def run_sample(csv_path: Path, sample_size: int, seed: int | None = None) -> Non
 def main() -> None:
     parser = argparse.ArgumentParser(description="Rank a random sample of CSV profiles.")
     parser.add_argument("--csv", default="data/test_profiles.csv", help="Path to CSV dataset")
-    parser.add_argument("--sample-size", type=int, default=10, help="How many random profiles to sample")
+    parser.add_argument("--sample-size", type=int, default=21, help="How many random profiles to sample (1 source + N candidates)")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducible sampling")
     args = parser.parse_args()
 
