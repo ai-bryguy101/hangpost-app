@@ -12,6 +12,12 @@ Usage:
 
     # Use a specific provider / model
     python scripts/evaluate_matches.py --seed 7 --ai-eval --ai-provider openai --ai-model gpt-4o
+
+WHAT CHANGED (v0.2.0):
+- Updated to display the new taxonomy fields (hobbies, interests, fan_of)
+  and new scoring signals (college_match, faith_match, travel_overlap).
+- Location now shows city + state together.
+- Score breakdown includes all 9 component signals.
 """
 
 import argparse
@@ -31,10 +37,8 @@ from hangpost_matching.loader import profile_from_row
 
 # CSV columns we care about for the "full profile" view.
 PROFILE_DISPLAY_FIELDS = [
-    "name", "age", "hometown", "homestate", "college", "degree", "job",
-    "hobbies_activities_sports_games_skills_certifications",
-    "interests_likes", "fan_of", "faith_religion", "travel",
-    "friends_in_common",
+    "name", "age", "city", "state", "college", "degree", "job", "faith",
+    "hobbies", "interests", "fan_of", "travel", "friends_in_common",
 ]
 
 
@@ -48,14 +52,14 @@ def _print_full_profile(label: str, row: dict[str, str]) -> None:
     print(f"  {label}: {row['name']}")
     print(f"{'=' * 80}")
     print(f"  Age:        {row['age']}")
-    print(f"  Hometown:   {row['hometown']}, {row['homestate']}")
+    print(f"  Location:   {row['city']}, {row['state']}")
     print(f"  College:    {row['college']}")
     print(f"  Degree:     {row['degree']}")
     print(f"  Job:        {row['job']}")
-    print(f"  Faith:      {row['faith_religion']}")
+    print(f"  Faith:      {row['faith']}")
     print(f"  Mutual friends in common: {row['friends_in_common']}")
-    print(f"  Hobbies:    {row['hobbies_activities_sports_games_skills_certifications']}")
-    print(f"  Interests:  {row['interests_likes']}")
+    print(f"  Hobbies:    {row['hobbies']}")
+    print(f"  Interests:  {row['interests']}")
     print(f"  Fan of:     {row['fan_of']}")
     print(f"  Travel:     {row['travel']}")
 
@@ -66,20 +70,24 @@ def _print_ranked_match(rank: int, row: dict[str, str], breakdown, source_age: i
     age_gap = abs((source_age or 0) - cand_age)
     print(f"\n  #{rank} — {row['name']}  (Score: {breakdown.total_score:.3f})")
     print(f"  {'─' * 60}")
-    print(f"  Age: {cand_age}  (gap: {age_gap})  |  {row['hometown']}, {row['homestate']}")
+    print(f"  Age: {cand_age}  (gap: {age_gap})  |  {row['city']}, {row['state']}")
     print(f"  College: {row['college']}  |  Degree: {row['degree']}")
-    print(f"  Job: {row['job']}  |  Faith: {row['faith_religion']}")
-    print(f"  Hobbies:   {row['hobbies_activities_sports_games_skills_certifications']}")
-    print(f"  Interests: {row['interests_likes']}")
+    print(f"  Job: {row['job']}  |  Faith: {row['faith']}")
+    print(f"  Hobbies:   {row['hobbies']}")
+    print(f"  Interests: {row['interests']}")
     print(f"  Fan of:    {row['fan_of']}")
     print(f"  Travel:    {row['travel']}")
     print(f"  Mutual friends in common: {row['friends_in_common']}")
     print(f"  --- Score Breakdown ---")
+    print(f"    Hobby overlap:     {breakdown.hobby_overlap:.3f}")
     print(f"    Interest overlap:  {breakdown.interest_overlap:.3f}")
-    print(f"    Topic overlap:     {breakdown.liked_topic_overlap:.3f}")
+    print(f"    Fan-of overlap:    {breakdown.fan_of_overlap:.3f}")
     print(f"    Mutual friends:    {breakdown.mutual_friends:.3f}  (boost: {breakdown.social_boost:.3f})")
     print(f"    Location match:    {breakdown.location_match:.3f}")
     print(f"    Age compatibility: {breakdown.age_compatibility:.3f}")
+    print(f"    College match:     {breakdown.college_match:.3f}")
+    print(f"    Faith match:       {breakdown.faith_match:.3f}")
+    print(f"    Travel overlap:    {breakdown.travel_overlap:.3f}")
 
 
 # ---------------------------------------------------------------------------
@@ -94,42 +102,43 @@ def export_evaluation_csv(
     """Write a reviewable CSV with the source profile + all ranked candidates."""
     fieldnames = [
         "role", "rank", "score",
-        "interest_overlap", "topic_overlap", "mutual_friends_score",
-        "social_boost", "location_match", "age_compatibility",
+        "hobby_overlap", "interest_overlap", "fan_of_overlap",
+        "mutual_friends_score", "social_boost",
+        "location_match", "age_compatibility",
+        "college_match", "faith_match", "travel_overlap",
     ] + PROFILE_DISPLAY_FIELDS
 
     with output_path.open("w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
 
-        # Source row
+        # Source row (no scores — it's the person we're matching FOR).
         source_out = {f: source_row.get(f, "") for f in PROFILE_DISPLAY_FIELDS}
         source_out["role"] = "SOURCE"
-        source_out["rank"] = ""
-        source_out["score"] = ""
-        source_out["interest_overlap"] = ""
-        source_out["topic_overlap"] = ""
-        source_out["mutual_friends_score"] = ""
-        source_out["social_boost"] = ""
-        source_out["location_match"] = ""
-        source_out["age_compatibility"] = ""
+        for score_col in fieldnames[:13]:
+            if score_col not in ("role",):
+                source_out.setdefault(score_col, "")
         writer.writerow(source_out)
 
-        # Candidate rows
+        # Candidate rows with full score breakdowns.
         for rank, row, breakdown in ranked_rows:
             cand_out = {f: row.get(f, "") for f in PROFILE_DISPLAY_FIELDS}
             cand_out["role"] = "CANDIDATE"
             cand_out["rank"] = rank
             cand_out["score"] = f"{breakdown.total_score:.4f}"
+            cand_out["hobby_overlap"] = f"{breakdown.hobby_overlap:.4f}"
             cand_out["interest_overlap"] = f"{breakdown.interest_overlap:.4f}"
-            cand_out["topic_overlap"] = f"{breakdown.liked_topic_overlap:.4f}"
+            cand_out["fan_of_overlap"] = f"{breakdown.fan_of_overlap:.4f}"
             cand_out["mutual_friends_score"] = f"{breakdown.mutual_friends:.4f}"
             cand_out["social_boost"] = f"{breakdown.social_boost:.4f}"
             cand_out["location_match"] = f"{breakdown.location_match:.4f}"
             cand_out["age_compatibility"] = f"{breakdown.age_compatibility:.4f}"
+            cand_out["college_match"] = f"{breakdown.college_match:.4f}"
+            cand_out["faith_match"] = f"{breakdown.faith_match:.4f}"
+            cand_out["travel_overlap"] = f"{breakdown.travel_overlap:.4f}"
             writer.writerow(cand_out)
 
-    print(f"\nExported evaluation CSV → {output_path}")
+    print(f"\nExported evaluation CSV -> {output_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -141,13 +150,13 @@ def _build_profile_text(row: dict[str, str]) -> str:
     return (
         f"Name: {row['name']}\n"
         f"Age: {row['age']}\n"
-        f"Hometown: {row['hometown']}, {row['homestate']}\n"
+        f"Location: {row['city']}, {row['state']}\n"
         f"College: {row['college']}\n"
         f"Degree: {row['degree']}\n"
         f"Job: {row['job']}\n"
-        f"Faith: {row['faith_religion']}\n"
-        f"Hobbies/Skills: {row['hobbies_activities_sports_games_skills_certifications']}\n"
-        f"Interests/Likes: {row['interests_likes']}\n"
+        f"Faith: {row['faith']}\n"
+        f"Hobbies: {row['hobbies']}\n"
+        f"Interests: {row['interests']}\n"
         f"Fan of: {row['fan_of']}\n"
         f"Travel: {row['travel']}\n"
         f"Friends in common: {row['friends_in_common']}"
@@ -201,7 +210,7 @@ def _call_anthropic(prompt: str, model: str) -> str:
     except ImportError:
         sys.exit("ERROR: pip install anthropic  (or set --ai-provider openai)")
 
-    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env
+    client = anthropic.Anthropic()
     message = client.messages.create(
         model=model,
         max_tokens=4096,
@@ -217,7 +226,7 @@ def _call_openai(prompt: str, model: str) -> str:
     except ImportError:
         sys.exit("ERROR: pip install openai  (or set --ai-provider anthropic)")
 
-    client = openai.OpenAI()  # reads OPENAI_API_KEY + OPENAI_BASE_URL from env
+    client = openai.OpenAI()
     response = client.chat.completions.create(
         model=model,
         max_tokens=4096,
@@ -304,7 +313,6 @@ def run_evaluation(
         print(f"{'=' * 80}")
         print(result)
 
-        # Also save AI evaluation to a text file alongside the CSV
         ai_output_path = output_csv.with_suffix(".ai_eval.txt")
         with ai_output_path.open("w") as fh:
             fh.write(f"Provider: {ai_provider}\nModel: {ai_model}\n")
@@ -312,7 +320,7 @@ def run_evaluation(
             fh.write(f"Top {ai_top} candidates evaluated\n")
             fh.write(f"{'=' * 60}\n\n")
             fh.write(result)
-        print(f"\nAI evaluation saved → {ai_output_path}")
+        print(f"\nAI evaluation saved -> {ai_output_path}")
 
 
 def main() -> None:
@@ -325,7 +333,6 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducible sampling")
     parser.add_argument("--output", default="data/evaluation_output.csv", help="Output CSV path")
 
-    # AI evaluation options
     ai_group = parser.add_argument_group("AI evaluation")
     ai_group.add_argument("--ai-eval", action="store_true", help="Enable AI evaluation of top matches")
     ai_group.add_argument("--ai-top", type=int, default=5, help="How many top matches to send to AI (default: 5)")
@@ -333,14 +340,10 @@ def main() -> None:
         "--ai-provider", default="anthropic", choices=["anthropic", "openai"],
         help="LLM provider (default: anthropic). 'openai' works with any OpenAI-compatible API.",
     )
-    ai_group.add_argument(
-        "--ai-model", default=None,
-        help="Model name (default: claude-sonnet-4-20250514 for anthropic, gpt-4o for openai)",
-    )
+    ai_group.add_argument("--ai-model", default=None, help="Model name override")
 
     args = parser.parse_args()
 
-    # Set default model based on provider
     if args.ai_model is None:
         args.ai_model = {
             "anthropic": "claude-sonnet-4-20250514",
