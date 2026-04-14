@@ -180,19 +180,47 @@ class ScoringWeights:
     The base score weights should roughly sum to 1.0 so the base score stays
     in the 0.0-1.0 range before the social boost is applied.
 
-    WHY THESE DEFAULTS:
-    - mutual_friends (0.25): Strongest real-world friendship predictor. If you
-      already share friends, you're very likely to get along.
-    - age_compatibility (0.15): Age matters for shared life stage, but it's not
-      everything — a 25-year-old and 30-year-old can absolutely be friends.
+    FRIENDSHIP TIER RATIONALE (why these weights):
+    The weights encode a real-world friendship probability hierarchy:
+
+    TIER 1 — "Instant friends" (friends in common)
+    - mutual_friends (0.20) + friend_common_boost (0.35):
+      The combo makes mutual-friend candidates strongly dominant. The base
+      weight rewards *how many* shared friends you have; the boost fires even
+      if you share just one. Together they can add up to 0.55 before other
+      signals are counted.
+
+    TIER 2 — "Probable friends" (hometown)
+    - location_match (0.22): Now the single largest base weight.
+      Being from the same city means you literally have the option to meet.
+      Being in the same state is a meaningful partial signal (0.4 × 0.22 = 0.088).
+      WHY so high: A friend in your city is infinitely more actionable than
+      a perfect-taste-match living 2,000 miles away.
+
+    TIER 3 — "Probable friends" (college)
+    - college_match (0.18): Second-largest base weight.
+      Alumni connections carry pre-built social context: shared campus,
+      traditions, overlapping friend networks, and a built-in conversation
+      opener ("Oh you went to UT too? Did you know...").
+      WHY almost as high as location: same-school bonds are nearly as strong
+      as same-city proximity — you already have a shared identity.
+
+    TIER 4 — "Sometimes friends" (hobbies)
     - hobby_overlap (0.15): Shared activities = shared time together.
-    - interest_overlap (0.12): Broad taste alignment matters for conversation.
-    - fan_of_overlap (0.08): Specific shared fandoms are great ice-breakers.
-    - location_match (0.08): Proximity matters for hanging out in person.
-    - college_match (0.05): Alumni connection is a nice bonus, not a dealbreaker.
-    - faith_match (0.05): Shared values matter for some, not all.
-    - travel_overlap (0.07): Shared wanderlust signals lifestyle compatibility.
-    - friend_common_boost (0.35): Separate lane — big boost when mutual friends exist.
+      Kept at the same weight — this is the right level for "sometimes friends."
+
+    TIER 5 — "Sometimes friends" (interests & taste)
+    - interest_overlap (0.08): Reduced. Broad taste alignment is nice but
+      not as predictive as shared activities.
+    - fan_of_overlap (0.05): Reduced. Good ice-breaker but shallow signal.
+
+    SUPPORTING SIGNALS (not in user's tier list, still meaningful):
+    - age_compatibility (0.07): Reduced significantly. Similar life stages
+      matter, but not enough to override location or college.
+    - faith_match (0.03): Small — relevant to those who care deeply.
+    - travel_overlap (0.02): Lifestyle compatibility signal, but thin.
+
+    BASE WEIGHT SUM: 0.20+0.22+0.18+0.15+0.08+0.05+0.07+0.03+0.02 = 1.00
 
     DESIGN NOTE:
     `friend_common_boost` is NOT part of the base score sum. It's a separate
@@ -201,35 +229,37 @@ class ScoringWeights:
     higher. The total is capped at 1.0 so scores stay interpretable.
     """
 
-    # ── Base score components (should roughly sum to 1.0) ──
+    # ── Base score components (sum to 1.0) ──
 
-    # Things you DO together — strong friendship signal.
+    # TIER 2: Hometown — now the largest single base weight.
+    # Same city = full credit. Same state = 40% credit (still meaningful).
+    location_match: float = 0.22
+
+    # TIER 3: College alumni match — nearly as strong as location.
+    # Exact match only: you either went to the same school or you didn't.
+    college_match: float = 0.18
+
+    # TIER 1: Mutual friend count, normalized to MAX_MUTUAL_FRIENDS.
+    # Combined with friend_common_boost below, mutual friends dominate ranking.
+    mutual_friends: float = 0.20
+
+    # TIER 4: Hobbies — shared activities you can actually do together.
     hobby_overlap: float = 0.15
 
-    # Broad taste categories — "we're into the same kind of stuff."
-    interest_overlap: float = 0.12
+    # TIER 5: Broad taste categories — "we're into the same kind of stuff."
+    interest_overlap: float = 0.08
 
-    # Specific fandoms — "oh you watch that too?!" moments.
-    fan_of_overlap: float = 0.08
+    # TIER 5: Specific fandoms — "oh you watch that too?!" moments.
+    fan_of_overlap: float = 0.05
 
-    # Mutual friend count, normalized. The more friends you share,
-    # the more likely you'll get along.
-    mutual_friends: float = 0.25
+    # Supporting: age closeness. Important but not a tier in the user's model.
+    age_compatibility: float = 0.07
 
-    # Tiered location: same city (full), same state (partial), else 0.
-    location_match: float = 0.08
+    # Supporting: shared faith/values. Small but meaningful to those it applies.
+    faith_match: float = 0.03
 
-    # Age closeness — similar life stages.
-    age_compatibility: float = 0.15
-
-    # Same college — shared institutional context.
-    college_match: float = 0.05
-
-    # Same faith — shared values and community.
-    faith_match: float = 0.05
-
-    # Overlapping travel bucket lists.
-    travel_overlap: float = 0.07
+    # Supporting: travel wishlist overlap — thin lifestyle signal.
+    travel_overlap: float = 0.02
 
     # ── Separate social boost (not part of the base score sum) ──
     friend_common_boost: float = 0.35

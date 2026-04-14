@@ -136,16 +136,28 @@ class TestComputeMatchScore:
         assert strong_score > weak_score
 
     def test_default_weights_priority_order(self):
-        """Default weights should prioritize mutual_friends > age > hobbies > interests.
+        """Default weights reflect the friendship tier hierarchy:
+        location > college > mutual_friends > hobbies > interests.
 
-        WHY this order: Mutual friends is the strongest real-world friendship
-        predictor. Age matters for life stage. Hobbies are shared activities.
-        Interests are broad taste. The defaults encode this priority.
+        WHY this order: The tier list is:
+          Tier 1 (instant friends): mutual friends — handled by base weight
+            PLUS the separate friend_common_boost, which is the real driver.
+          Tier 2 (probable friends): hometown — location_match is the
+            single largest base weight so it dominates when no mutual friends.
+          Tier 3 (probable friends): college — second-largest base weight.
+          Tier 4 (sometimes friends): hobbies.
+          Tier 5 (sometimes friends): interests.
         """
         w = ScoringWeights()
-        assert w.mutual_friends > w.age_compatibility
-        assert w.age_compatibility >= w.hobby_overlap
+        # Tier 2: location is the biggest base weight (no boost of its own).
+        assert w.location_match > w.mutual_friends
+        # Tier 1: mutual_friends base weight sits above college. It also has
+        # the separate friend_common_boost, making it truly dominant overall.
+        assert w.mutual_friends > w.college_match
+        # Tier 3 → 4 → 5:
+        assert w.college_match > w.hobby_overlap
         assert w.hobby_overlap > w.interest_overlap
+        assert w.interest_overlap > w.fan_of_overlap
 
     def test_all_nine_weights_sum_near_one(self):
         """The 9 base weights should sum to approximately 1.0.
@@ -154,6 +166,10 @@ class TestComputeMatchScore:
         in the 0.0-1.0 range, which makes it interpretable and consistent.
         The friend_common_boost is intentionally excluded from this sum because
         it's a separate additive boost.
+
+        Current layout: location(0.22) + college(0.18) + mutual_friends(0.20)
+        + hobby(0.15) + interest(0.08) + fan_of(0.05) + age(0.07)
+        + faith(0.03) + travel(0.02) = 1.00
         """
         w = ScoringWeights()
         total = (
