@@ -132,7 +132,9 @@ def rank_candidates(
     - socially-connected candidates first
     - then non-connected candidates by compatibility
     """
-    scored = [(candidate, compute_match_score(source, candidate, weights)) for candidate in candidates]
+    scored = [
+        (candidate, compute_match_score(source, candidate, weights)) for candidate in candidates
+    ]
     return sorted(
         scored,
         key=lambda item: (item[1].has_mutual_friends, item[1].total_score),
