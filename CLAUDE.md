@@ -29,6 +29,25 @@ small radius**. The radius rule is a **hard pre-filter**, not a ranking signal.
 
 ---
 
+## Profile semantic representation — auto-synthesized, NOT user-written
+
+Hangpost users do **not** write a free-text bio. Every profile's "semantic
+representation" is built deterministically from the structured fields they
+already provide (interests, liked topics, hometown, age, etc.). That
+synthesized string is what gets embedded for the `semantic_similarity`
+ranking signal.
+
+- Implementation: `hangpost_matching.embeddings.profile_to_text(profile)`
+  returns the natural-language string the embedder consumes. The matching
+  engine never reads a user-authored bio.
+- Do **not** add a `bio` field to `UserProfile`, do not assume users will
+  hand-write bios, and do not surface "write your bio" UI in any spec.
+- If a future feature needs more text per user (e.g., "what I'm looking for"),
+  add it as a new structured prompt and extend `profile_to_text` — never as
+  a generic `bio` blob.
+
+---
+
 ## The 3-phase ML roadmap
 
 1. **Phase 1 — Deterministic weighted scoring** *(done)*

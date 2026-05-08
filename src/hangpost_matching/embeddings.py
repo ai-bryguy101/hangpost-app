@@ -1,4 +1,4 @@
-"""Phase 2: text embeddings for semantic bio similarity.
+"""Phase 2: text embeddings for semantic profile similarity.
 
 Design principles
 -----------------
@@ -12,14 +12,19 @@ This module is intentionally lightweight in its core shape so that:
 
 The matching engine does not load any model itself. Instead it accepts a
 precomputed `{user_id: vector}` dict via
-`compute_match_score(..., bio_embeddings=...)`. That separation keeps the
-ranker pure (no I/O, no model state) and makes batch precomputation easy.
+`compute_match_score(..., profile_embeddings=...)`. That separation keeps
+the ranker pure (no I/O, no model state) and makes batch precomputation
+easy.
+
+Hangpost users do NOT write free-text bios. The text that gets embedded
+is auto-synthesized from the structured fields each user has already
+provided (interests, liked topics, hometown, age). See `profile_to_text`.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Protocol
 
 from .models import UserProfile
@@ -47,6 +52,35 @@ def cosine_similarity(a: Vector, b: Vector) -> float:
     if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
     return dot / (norm_a * norm_b)
+
+
+def profile_to_text(profile: UserProfile) -> str:
+    """Compose a deterministic natural-language summary of a profile.
+
+    This intentionally NEVER consumes a hand-written bio — Hangpost users
+    don't write bios. The semantic representation is built from the same
+    structured fields the rest of the engine already uses, so every user
+    automatically gets a useful embedding without extra typing.
+
+    The fields are joined in a fixed order with sorted set contents so the
+    output is reproducible (re-embedding the same profile twice yields the
+    same vector, which matters for caching and evaluation).
+
+    Returns an empty string if the profile has no usable fields, in which
+    case `embed_profiles` will skip it.
+    """
+    parts: list[str] = []
+    if profile.age is not None:
+        parts.append(f"{profile.age} years old")
+    if profile.location:
+        parts.append(f"from {profile.location}")
+    if profile.interests:
+        parts.append(f"enjoys {', '.join(sorted(profile.interests))}")
+    if profile.liked_topics:
+        parts.append(f"likes {', '.join(sorted(profile.liked_topics))}")
+    if not parts:
+        return ""
+    return ". ".join(parts) + "."
 
 
 class Embedder(Protocol):
@@ -96,10 +130,22 @@ class SentenceTransformerEmbedder:
 def embed_profiles(
     profiles: Iterable[UserProfile],
     embedder: Embedder,
+    text_fn: Callable[[UserProfile], str] = profile_to_text,
 ) -> dict[str, Vector]:
-    """Precompute `{user_id: vector}` for every profile that has a bio.
+    """Precompute `{user_id: vector}` for every profile.
 
-    Profiles without a bio are skipped — the ranker treats missing
-    embeddings as a 0.0 bio_similarity contribution, never an error.
+    Each profile is run through `text_fn` (default: `profile_to_text`) to
+    produce the string that gets embedded. Profiles whose `text_fn` output
+    is empty are skipped — the ranker treats missing embeddings as a 0.0
+    contribution, never an error.
+
+    Pass a custom `text_fn` to experiment with different ways of describing
+    a profile (e.g., for ablation studies in evaluation).
     """
-    return {profile.user_id: embedder.embed(profile.bio) for profile in profiles if profile.bio}
+    result: dict[str, Vector] = {}
+    for profile in profiles:
+        text = text_fn(profile)
+        if not text:
+            continue
+        result[profile.user_id] = embedder.embed(text)
+    return result

@@ -50,7 +50,6 @@ upstream candidate-retrieval layer (database / geo-index) enforces the radius.
   - location (hometown — see "How location works" above)
   - age
   - mutual friend IDs
-  - bio (free text, used by Phase 2 semantic similarity)
 - `ScoringWeights` for configurable component weights.
 - `compute_match_score` that combines:
   - interest overlap (Jaccard)
@@ -58,17 +57,22 @@ upstream candidate-retrieval layer (database / geo-index) enforces the radius.
   - mutual-friend score
   - location score
   - age-gap score
-  - **bio similarity** (cosine similarity between sentence-transformer embeddings, when supplied)
+  - **semantic similarity** (cosine similarity between sentence-transformer
+    embeddings, computed from auto-synthesized profile text)
 - `rank_candidates` returning sorted recommendations with full score breakdown.
 - Unit tests for deterministic behavior, including embedding math and tie-breaking.
 
-### Phase 2: bio embeddings
+### Phase 2: semantic profile embeddings
 
-Semantic similarity between user bios is now a first-class signal. The ranker
-itself stays pure — it accepts a precomputed `{user_id: vector}` map and
-performs cosine similarity in pure Python — so the core package has no heavy
-dependencies. To produce real embeddings, install the `[ml]` extra and use
-`SentenceTransformerEmbedder`:
+Hangpost users do **not** write a free-text bio. Instead, every profile's
+"semantic representation" is auto-built from the structured fields they
+already provide (interests, liked topics, hometown, age) by
+`profile_to_text`. That synthesized string is what gets embedded.
+
+The ranker itself stays pure — it accepts a precomputed `{user_id: vector}`
+map and performs cosine similarity in pure Python — so the core package has
+no heavy dependencies. To produce real embeddings, install the `[ml]` extra
+and use `SentenceTransformerEmbedder`:
 
 ```bash
 pip install -e ".[ml]"
