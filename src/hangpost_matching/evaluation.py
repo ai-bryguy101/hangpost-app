@@ -25,10 +25,13 @@ available.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable, Sequence
+import random
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
+from .embeddings import Vector
 from .models import UserProfile
+from .scoring import rank_candidates
 
 # A ranker is anything that takes (source, candidates) and returns the
 # candidate user_ids in ranked order (best first). Thin contract on
@@ -178,3 +181,70 @@ def synthesize_relevance(source: UserProfile, candidate: UserProfile) -> bool:
         bool(source.mutual_friend_ids & candidate.mutual_friend_ids),
     ]
     return sum(signals) >= 3
+
+
+def build_queries(
+    profiles: list[UserProfile],
+    n_sources: int,
+    seed: int,
+    relevance_fn: Callable[[UserProfile, UserProfile], bool] = synthesize_relevance,
+) -> list[Query]:
+    """Sample `n_sources` random sources and label all other profiles for each.
+
+    Returns a list of (source, candidates, relevant_user_ids) tuples ready
+    to feed into `evaluate_ranker` or a learning-to-rank training loop.
+    """
+    rng = random.Random(seed)
+    sources = rng.sample(profiles, min(n_sources, len(profiles)))
+    queries: list[Query] = []
+    for source in sources:
+        candidates = [p for p in profiles if p.user_id != source.user_id]
+        relevant = {
+            candidate.user_id for candidate in candidates if relevance_fn(source, candidate)
+        }
+        queries.append((source, candidates, relevant))
+    return queries
+
+
+def split_queries(
+    queries: Sequence[Query], train_fraction: float, seed: int
+) -> tuple[list[Query], list[Query]]:
+    """Shuffle and split queries into train/test by query (no leakage).
+
+    A train/test split must happen at the *query* level — never at the
+    candidate level — otherwise the model would see the same source in
+    both halves and metrics would be optimistically biased.
+    """
+    rng = random.Random(seed)
+    shuffled = list(queries)
+    rng.shuffle(shuffled)
+    cut = int(len(shuffled) * train_fraction)
+    return shuffled[:cut], shuffled[cut:]
+
+
+def make_rules_ranker(
+    profile_embeddings: Mapping[str, Vector] | None = None,
+) -> Ranker:
+    """Wrap `rank_candidates` to return user_ids only (Ranker contract)."""
+
+    def ranker(source: UserProfile, candidates: list[UserProfile]) -> list[str]:
+        ranked = rank_candidates(source, candidates, profile_embeddings=profile_embeddings)
+        return [profile.user_id for profile, _ in ranked]
+
+    return ranker
+
+
+def make_random_ranker(seed: int = 0) -> Ranker:
+    """Random shuffle, deterministic per source — used as a sanity baseline.
+
+    A real ranker should always beat this. If it doesn't, the labels or
+    the ranker have a bug.
+    """
+
+    def ranker(source: UserProfile, candidates: list[UserProfile]) -> list[str]:
+        rng = random.Random(f"{seed}:{source.user_id}")
+        shuffled = list(candidates)
+        rng.shuffle(shuffled)
+        return [profile.user_id for profile in shuffled]
+
+    return ranker

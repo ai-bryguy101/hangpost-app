@@ -82,6 +82,30 @@ python examples/embeddings_demo.py
 You can swap in any embedder (OpenAI, Cohere, a local model, etc.) by
 implementing the small `Embedder` Protocol in `hangpost_matching.embeddings`.
 
+### Phase 3: supervised learning-to-rank
+
+`hangpost_matching.learning.LearnedRanker` wraps a LightGBM `LGBMRanker`
+trained with the LambdaRank objective. It uses the *same* component
+features as Phases 1+2 (interest/topic overlap, mutual-friend ratio,
+location match, age compatibility, semantic similarity, mutual-friend
+flag) and learns the weights from labeled query data — so it can recover
+the deterministic ranker as a baseline and then beat it once it finds
+patterns the hand-tuned weights miss.
+
+The ranker contract is unchanged, so the offline evaluation harness
+treats `LearnedRanker.rank` exactly like the rules-based ranker:
+
+```bash
+pip install -e ".[ml]"
+python scripts/train.py --with-embeddings              # train + held-out eval
+python scripts/evaluate.py --with-embeddings \
+    --learned-model models/learned_ranker.joblib       # compare side-by-side
+```
+
+A `Predictor` Protocol (anything with `predict(x) -> Sequence[float]`)
+keeps the test suite model-free — CI never installs LightGBM. The real
+training and evaluation runs against the `[ml]` extra.
+
 ---
 
 ## Run locally
@@ -135,29 +159,36 @@ Run the included comparison script:
 ```bash
 python scripts/evaluate.py                  # rules vs. random baseline
 python scripts/evaluate.py --queries 100 --k 5
-python scripts/evaluate.py --with-embeddings   # adds rules+embeddings (needs [ml] extra)
+python scripts/evaluate.py --with-embeddings                                  # + Phase 2
+python scripts/evaluate.py --with-embeddings --learned-model models/learned_ranker.joblib   # + Phase 3
 ```
 
-Example output on the seed dataset:
+Example output on the seed dataset (rules-only on 50 queries, k=10):
 
 ```
-System                   P@10     R@10   NDCG@10    MAP@10
-------------------------------------------------------------
-random                  0.196    0.013     0.188     0.079
-rules_only              0.982    0.067     0.988     0.979
+System                     P@10     R@10   NDCG@10    MAP@10
+--------------------------------------------------------------
+random                    0.196    0.013     0.188     0.079
+rules_only                0.982    0.067     0.988     0.979
 ```
+
+The full Phase 1 / Phase 2 / Phase 3 numbers depend on running with the
+`[ml]` extra installed (sentence-transformers + LightGBM) and are
+reproduced by `python scripts/train.py --with-embeddings`.
 
 ## Suggested next steps
 
 1. ~~Add profile text embeddings (`semantic_similarity`) to the score breakdown.~~ ✅ Phase 2 done.
 2. ~~Build an offline evaluation harness (precision@k, recall@k, NDCG@k, MAP@k).~~ ✅ done.
-3. Run `scripts/evaluate.py --with-embeddings` with `[ml]` installed and
-   record the rules-only vs rules+embeddings comparison.
-4. Add EDA notebooks (`notebooks/`) exploring the seed dataset:
+3. ~~Train a learning-to-rank model (LightGBM `LGBMRanker`) on labeled queries.~~ ✅ Phase 3 done.
+4. Run `scripts/train.py --with-embeddings` in a `[ml]`-installed env and record the
+   rules / rules+embeddings / learned numbers in this README.
+5. Add EDA notebooks (`notebooks/`) exploring the seed dataset:
    distributions, correlations between signals, embedding visualizations (UMAP/t-SNE).
-5. Log recommendation outcomes (`shown`, `clicked`, `friend_request_sent`, `accepted`)
-   so synthetic labels can eventually be replaced with real ones.
-6. Phase 3: train a learning-to-rank model (e.g., LightGBM `LGBMRanker`) once label volume is sufficient.
+6. Log real recommendation outcomes (`shown`, `clicked`, `friend_request_sent`,
+   `accepted`) so synthetic labels can eventually be replaced with real ones.
+7. Author a model card (`docs/MODEL_CARD.md`) and data card (`docs/DATA_CARD.md`).
+8. Wrap the ranker in a small FastAPI service + Dockerfile for a deployment story.
 
 
 

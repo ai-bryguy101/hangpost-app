@@ -57,17 +57,31 @@ ranking signal.
    embeddings, integrated into the same weighted framework. The ranker
    itself is model-free — it accepts a precomputed `{user_id: vector}`
    map. The optional `[ml]` extra wires up `SentenceTransformerEmbedder`.
-3. **Phase 3 — Supervised learning-to-rank** *(next)*
-   Once outcome labels (accepts, chats started, retention) exist, train a
-   LightGBM or similar ranker that learns the weights from data.
+3. **Phase 3 — Supervised learning-to-rank** *(scaffold done; needs real outcome labels)*
+   `hangpost_matching.learning.LearnedRanker` wraps a LightGBM `LGBMRanker`
+   (LambdaRank objective). Features are the same components Phases 1+2
+   produce. `scripts/train.py` fits the model on synthetic labels for now;
+   swap in real outcome labels (accepts, chats started, retention) as soon
+   as those become available.
 
 ### Evaluation harness *(done)*
 
 `hangpost_matching.evaluation` implements precision@k, recall@k, MAP@k,
 and NDCG@k, plus an `evaluate_ranker` that runs any `Ranker` over a
-query set. `synthesize_relevance` provides a deterministic stand-in
-ground truth from the structured fields until real outcome data exists.
-`scripts/evaluate.py` compares random / rules-only / rules+embeddings.
+query set, plus `build_queries` / `split_queries` / `make_rules_ranker`
+/ `make_random_ranker` so both `scripts/evaluate.py` and `scripts/train.py`
+share one source of truth. `synthesize_relevance` provides a
+deterministic stand-in ground truth from the structured fields until
+real outcome data exists.
+
+### Test discipline
+
+Heavy ML deps (`lightgbm`, `sentence-transformers`, `numpy`, `joblib`)
+are confined to the `[ml]` extra and imported lazily. CI installs only
+`[dev]` and runs the full test suite against stubs that satisfy the
+`Embedder` and `Predictor` Protocols. Real model behaviour is covered
+by `scripts/train.py` and `scripts/evaluate.py` against the `[ml]`
+install.
 
 ---
 

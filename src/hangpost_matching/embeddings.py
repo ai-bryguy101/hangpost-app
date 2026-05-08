@@ -109,7 +109,7 @@ class SentenceTransformerEmbedder:
         model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
     ) -> None:
         try:
-            from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
+            from sentence_transformers import SentenceTransformer
         except ImportError as exc:
             raise ImportError(
                 "sentence-transformers is required for SentenceTransformerEmbedder. "
