@@ -116,15 +116,48 @@ python examples/random_sample_ranking.py --sample-size 10 --seed 42
 If AgeComp looks low/zero in a run, use a fixed seed and inspect the printed `CandAge` + `AgeGap` columns.
 A gap of 10+ years now intentionally maps to `AgeComp = 0.0` in the current ladder rule.
 
+## Offline evaluation
+
+`hangpost_matching.evaluation` provides standard information-retrieval
+metrics (precision@k, recall@k, MAP@k, NDCG@k) and a generic
+`evaluate_ranker` that runs any `Ranker` against a query set.
+
+Until real outcome data (accepts, chats started, retention) is available,
+`synthesize_relevance` produces a deterministic ground-truth label by
+checking whether a candidate hits ≥3 of 5 multi-signal thresholds
+(shared interests, liked topics, hometown, age proximity, mutual
+friends). Because that rule is *thresholded* and the ranker is
+*continuous-weighted*, the two are structurally different — so the
+metrics still measure ranking quality.
+
+Run the included comparison script:
+
+```bash
+python scripts/evaluate.py                  # rules vs. random baseline
+python scripts/evaluate.py --queries 100 --k 5
+python scripts/evaluate.py --with-embeddings   # adds rules+embeddings (needs [ml] extra)
+```
+
+Example output on the seed dataset:
+
+```
+System                   P@10     R@10   NDCG@10    MAP@10
+------------------------------------------------------------
+random                  0.196    0.013     0.188     0.079
+rules_only              0.982    0.067     0.988     0.979
+```
+
 ## Suggested next steps
 
-1. ~~Add profile text embeddings (`bio_similarity`) to the score breakdown.~~ ✅ done in Phase 2.
-2. Build an offline evaluation harness with synthetic relevance labels
-   (precision@k, recall@k, NDCG@k) so future changes can be measured rather than guessed.
-3. Add EDA notebooks (`notebooks/`) exploring the seed dataset:
+1. ~~Add profile text embeddings (`semantic_similarity`) to the score breakdown.~~ ✅ Phase 2 done.
+2. ~~Build an offline evaluation harness (precision@k, recall@k, NDCG@k, MAP@k).~~ ✅ done.
+3. Run `scripts/evaluate.py --with-embeddings` with `[ml]` installed and
+   record the rules-only vs rules+embeddings comparison.
+4. Add EDA notebooks (`notebooks/`) exploring the seed dataset:
    distributions, correlations between signals, embedding visualizations (UMAP/t-SNE).
-4. Log recommendation outcomes (`shown`, `clicked`, `friend_request_sent`, `accepted`).
-5. Phase 3: train a learning-to-rank model (e.g., LightGBM `LGBMRanker`) once label volume is sufficient.
+5. Log recommendation outcomes (`shown`, `clicked`, `friend_request_sent`, `accepted`)
+   so synthetic labels can eventually be replaced with real ones.
+6. Phase 3: train a learning-to-rank model (e.g., LightGBM `LGBMRanker`) once label volume is sufficient.
 
 
 

@@ -57,11 +57,17 @@ ranking signal.
    embeddings, integrated into the same weighted framework. The ranker
    itself is model-free — it accepts a precomputed `{user_id: vector}`
    map. The optional `[ml]` extra wires up `SentenceTransformerEmbedder`.
-3. **Phase 3 — Supervised learning-to-rank** *(next, after evaluation harness)*
+3. **Phase 3 — Supervised learning-to-rank** *(next)*
    Once outcome labels (accepts, chats started, retention) exist, train a
-   LightGBM or similar ranker that learns the weights from data. Until then,
-   build an offline evaluation harness with synthetic labels so changes can
-   be measured.
+   LightGBM or similar ranker that learns the weights from data.
+
+### Evaluation harness *(done)*
+
+`hangpost_matching.evaluation` implements precision@k, recall@k, MAP@k,
+and NDCG@k, plus an `evaluate_ranker` that runs any `Ranker` over a
+query set. `synthesize_relevance` provides a deterministic stand-in
+ground truth from the structured fields until real outcome data exists.
+`scripts/evaluate.py` compares random / rules-only / rules+embeddings.
 
 ---
 
