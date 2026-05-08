@@ -39,6 +39,11 @@ class UserProfile:
     # Any intersection with another profile indicates mutual friends.
     mutual_friend_ids: set[str] = field(default_factory=set)
 
+    # Free-text self-description used by Phase 2 semantic similarity.
+    # The matching engine never reads this directly — it consumes
+    # precomputed embeddings via `compute_match_score(..., bio_embeddings=...)`.
+    bio: str | None = None
+
 
 @dataclass(frozen=True)
 class ScoringWeights:
@@ -69,6 +74,10 @@ class ScoringWeights:
     # Age-closeness strength inside base score.
     age_compatibility: float = 0.25
 
+    # Phase 2 signal: cosine similarity between profile bio embeddings.
+    # Treated like any other component — added to the same weighted base.
+    bio_similarity: float = 0.20
+
     # Separate social boost if candidate shares any mutual friends.
     friend_common_boost: float = 0.35
 
@@ -98,3 +107,4 @@ class MatchBreakdown:
     mutual_friends: float
     location_match: float
     age_compatibility: float
+    bio_similarity: float

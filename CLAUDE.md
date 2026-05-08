@@ -31,14 +31,18 @@ small radius**. The radius rule is a **hard pre-filter**, not a ranking signal.
 
 ## The 3-phase ML roadmap
 
-1. **Phase 1 — Deterministic weighted scoring** *(current state)*
+1. **Phase 1 — Deterministic weighted scoring** *(done)*
    Rules + Jaccard overlaps + step-down age ladder + mutual-friend social boost.
-2. **Phase 2 — Text embeddings**
-   Add `bio_similarity` from a sentence-transformer model as one more signal in
-   the same weighted framework.
-3. **Phase 3 — Supervised learning-to-rank**
+2. **Phase 2 — Text embeddings** *(done)*
+   `bio_similarity` via cosine similarity between sentence-transformer
+   embeddings, integrated into the same weighted framework. The ranker
+   itself is model-free — it accepts a precomputed `{user_id: vector}`
+   map. The optional `[ml]` extra wires up `SentenceTransformerEmbedder`.
+3. **Phase 3 — Supervised learning-to-rank** *(next, after evaluation harness)*
    Once outcome labels (accepts, chats started, retention) exist, train a
-   LightGBM or similar ranker that learns the weights from data.
+   LightGBM or similar ranker that learns the weights from data. Until then,
+   build an offline evaluation harness with synthetic labels so changes can
+   be measured.
 
 ---
 

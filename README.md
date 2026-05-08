@@ -47,9 +47,10 @@ upstream candidate-retrieval layer (database / geo-index) enforces the radius.
 - `UserProfile` model with structured features:
   - interests
   - liked_topics
-  - location
+  - location (hometown — see "How location works" above)
   - age
   - mutual friend IDs
+  - bio (free text, used by Phase 2 semantic similarity)
 - `ScoringWeights` for configurable component weights.
 - `compute_match_score` that combines:
   - interest overlap (Jaccard)
@@ -57,8 +58,25 @@ upstream candidate-retrieval layer (database / geo-index) enforces the radius.
   - mutual-friend score
   - location score
   - age-gap score
+  - **bio similarity** (cosine similarity between sentence-transformer embeddings, when supplied)
 - `rank_candidates` returning sorted recommendations with full score breakdown.
-- Unit tests for deterministic behavior.
+- Unit tests for deterministic behavior, including embedding math and tie-breaking.
+
+### Phase 2: bio embeddings
+
+Semantic similarity between user bios is now a first-class signal. The ranker
+itself stays pure — it accepts a precomputed `{user_id: vector}` map and
+performs cosine similarity in pure Python — so the core package has no heavy
+dependencies. To produce real embeddings, install the `[ml]` extra and use
+`SentenceTransformerEmbedder`:
+
+```bash
+pip install -e ".[ml]"
+python examples/embeddings_demo.py
+```
+
+You can swap in any embedder (OpenAI, Cohere, a local model, etc.) by
+implementing the small `Embedder` Protocol in `hangpost_matching.embeddings`.
 
 ---
 
@@ -96,12 +114,13 @@ A gap of 10+ years now intentionally maps to `AgeComp = 0.0` in the current ladd
 
 ## Suggested next steps
 
-1. Add profile text embeddings (`bio_embedding_similarity`) to the score breakdown.
-2. Log recommendation outcomes (`shown`, `clicked`, `friend_request_sent`, `accepted`).
-3. Add online/offline evaluation metrics:
-   - precision@k
-   - acceptance rate@k
-4. Later: train a learning-to-rank model once label volume is sufficient.
+1. ~~Add profile text embeddings (`bio_similarity`) to the score breakdown.~~ ✅ done in Phase 2.
+2. Build an offline evaluation harness with synthetic relevance labels
+   (precision@k, recall@k, NDCG@k) so future changes can be measured rather than guessed.
+3. Add EDA notebooks (`notebooks/`) exploring the seed dataset:
+   distributions, correlations between signals, embedding visualizations (UMAP/t-SNE).
+4. Log recommendation outcomes (`shown`, `clicked`, `friend_request_sent`, `accepted`).
+5. Phase 3: train a learning-to-rank model (e.g., LightGBM `LGBMRanker`) once label volume is sufficient.
 
 
 
