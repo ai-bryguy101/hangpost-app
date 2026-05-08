@@ -1,169 +1,134 @@
-# Hangpost Matching Engine (MVP)
+# Hangpost Matching Engine
 
-This repository starts with a **transparent profile matching and ranking engine**.
+A friend-recommendation engine for a location-based social app. Three rankers
+behind one `Ranker` Protocol — each phase is measured against a held-out query
+set, and the strongest one ships:
 
-## Recommendation on your 3-phase approach
+1. **Phase 1 — Rules.** Deterministic weighted scoring (Jaccard interest/topic
+   overlap, mutual-friend ratio, hometown match, age-compatibility ladder)
+   plus a separate "social-boost" lane for candidates with mutual friends.
+2. **Phase 2 — Embeddings.** Adds `semantic_similarity` from
+   `sentence-transformers/all-MiniLM-L6-v2`. The text that gets embedded is
+   *auto-synthesized* from each user's structured fields by
+   `profile_to_text` — Hangpost users never write a bio.
+3. **Phase 3 — Learned.** A LightGBM `LGBMRanker` (LambdaRank objective)
+   trained on the same features as Phase 1+2, learning the weights from
+   labeled query data.
 
-Your phased plan is strong and practical:
+All three are evaluated by the same harness (`hangpost_matching.evaluation`)
+which implements precision@k / recall@k / NDCG@k / MAP@k from scratch.
 
-1. **Phase 1 (weighted scoring) is the right MVP**
-   - Fast to ship.
-   - Fully explainable.
-   - Easy to tune with product/domain input.
-2. **Phase 2 (text embeddings) is the best first AI upgrade**
-   - Captures semantic similarity in bios/interests.
-   - Integrates as one additional score in the same weighted framework.
-3. **Phase 3 (supervised ML) should wait until you have outcome data**
-   - Use accepted requests, chat starts, retention, etc. as labels.
+## Quickstart
 
-In short: start with rules + math, then add AI as a feature, then let ML optimize once data exists.
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
 
----
+pytest                       # run the full test suite
+python examples/demo.py      # rules-only ranking on a hand-built example
+python scripts/evaluate.py   # rules vs random baseline on the seed CSV
+```
 
-## Project goals for this repo
+To use the ML phases (sentence-transformers + LightGBM):
 
-- Build a deterministic ranking engine for friend recommendations.
-- Keep scoring explainable through component-level breakdowns.
-- Support hard constraints (dealbreakers) and soft preferences (weights).
+```bash
+pip install -e ".[ml]"
+python examples/embeddings_demo.py        # Phase 2: semantic similarity
+python scripts/train.py --with-embeddings # Phase 3: train + held-out comparison
+python scripts/evaluate.py --with-embeddings \
+    --learned-model models/learned_ranker.joblib
+```
 
-## How location works in Hangpost (important)
+To deploy as an HTTP service:
 
-Hangpost is a location-based app, but **physical distance is not a ranking signal**.
+```bash
+pip install -e ".[ml,serve]"
+HANGPOST_MODE=embeddings uvicorn hangpost_matching.server:app --host 0.0.0.0 --port 8000
+# or, with Docker:
+docker build -t hangpost-matching .
+docker run --rm -p 8000:8000 -e HANGPOST_MODE=embeddings hangpost-matching
+```
+
+## Architecture
+
+```
+                          ┌────────────────────────────────────┐
+                          │   Candidate retrieval (upstream)   │
+                          │   Hard radius pre-filter — geo     │
+                          │   index, NOT a ranking signal.     │
+                          └───────────────┬────────────────────┘
+                                          │
+                                          ▼  list[UserProfile]
+                          ┌────────────────────────────────────┐
+       profile_to_text ──▶│           Embedder (Phase 2)       │──▶ {user_id: vector}
+       (structured →      │  SentenceTransformerEmbedder       │
+        natural-lang)     │  / OpenAI / Cohere / your own      │
+                          └───────────────┬────────────────────┘
+                                          │
+                                          ▼
+   ┌────────────────────────────────────────────────────────────────────────┐
+   │                            Ranker contract                             │
+   │   def __call__(source, candidates) -> list[user_id]                    │
+   ├──────────────────────────┬───────────────────────────┬─────────────────┤
+   │  rules (Phase 1+2)       │   learned (Phase 3)       │  random base    │
+   │  rank_candidates(...)    │   LearnedRanker.rank(...) │  shuffle(seed)  │
+   └──────────────────────────┴───────────────────────────┴─────────────────┘
+                                          │
+                                          ▼
+                          ┌────────────────────────────────────┐
+                          │  evaluate_ranker — P@k R@k NDCG MAP│
+                          └────────────────────────────────────┘
+```
+
+## How "location" works in Hangpost (important)
+
+Hangpost is a location-based app, but **physical distance is not a ranking
+signal**.
 
 - **Current location (real-time)** is a *hard pre-filter*: the app only ever
   shows users profiles within a small radius of where they are right now.
   Profiles outside the radius are removed before the matching engine runs.
-  By the time `rank_candidates` is called, every candidate is already
-  in-radius, so the ranker does **not** know or care about physical distance.
 - **Hometown** is a *soft matching signal*: two users from the same hometown
-  rank higher because shared origin is a friendship cue. The `location` field
-  on `UserProfile` represents hometown today, not current location.
+  rank higher because shared origin is a friendship cue.
 
-This separation keeps the matching engine focused on compatibility, while the
+This separation keeps the matching engine focused on compatibility while the
 upstream candidate-retrieval layer (database / geo-index) enforces the radius.
 
-## Current implementation
+## Repository layout
 
-- `UserProfile` model with structured features:
-  - interests
-  - liked_topics
-  - location (hometown — see "How location works" above)
-  - age
-  - mutual friend IDs
-- `ScoringWeights` for configurable component weights.
-- `compute_match_score` that combines:
-  - interest overlap (Jaccard)
-  - liked-topic overlap (Jaccard)
-  - mutual-friend score
-  - location score
-  - age-gap score
-  - **semantic similarity** (cosine similarity between sentence-transformer
-    embeddings, computed from auto-synthesized profile text)
-- `rank_candidates` returning sorted recommendations with full score breakdown.
-- Unit tests for deterministic behavior, including embedding math and tie-breaking.
-
-### Phase 2: semantic profile embeddings
-
-Hangpost users do **not** write a free-text bio. Instead, every profile's
-"semantic representation" is auto-built from the structured fields they
-already provide (interests, liked topics, hometown, age) by
-`profile_to_text`. That synthesized string is what gets embedded.
-
-The ranker itself stays pure — it accepts a precomputed `{user_id: vector}`
-map and performs cosine similarity in pure Python — so the core package has
-no heavy dependencies. To produce real embeddings, install the `[ml]` extra
-and use `SentenceTransformerEmbedder`:
-
-```bash
-pip install -e ".[ml]"
-python examples/embeddings_demo.py
 ```
-
-You can swap in any embedder (OpenAI, Cohere, a local model, etc.) by
-implementing the small `Embedder` Protocol in `hangpost_matching.embeddings`.
-
-### Phase 3: supervised learning-to-rank
-
-`hangpost_matching.learning.LearnedRanker` wraps a LightGBM `LGBMRanker`
-trained with the LambdaRank objective. It uses the *same* component
-features as Phases 1+2 (interest/topic overlap, mutual-friend ratio,
-location match, age compatibility, semantic similarity, mutual-friend
-flag) and learns the weights from labeled query data — so it can recover
-the deterministic ranker as a baseline and then beat it once it finds
-patterns the hand-tuned weights miss.
-
-The ranker contract is unchanged, so the offline evaluation harness
-treats `LearnedRanker.rank` exactly like the rules-based ranker:
-
-```bash
-pip install -e ".[ml]"
-python scripts/train.py --with-embeddings              # train + held-out eval
-python scripts/evaluate.py --with-embeddings \
-    --learned-model models/learned_ranker.joblib       # compare side-by-side
+src/hangpost_matching/
+    models.py        UserProfile / ScoringWeights / MatchBreakdown
+    scoring.py       compute_match_score, rank_candidates, two-lane sort
+    embeddings.py    profile_to_text, cosine, Embedder Protocol
+    evaluation.py    P@k, R@k, NDCG@k, MAP@k, query/ranker helpers
+    learning.py      extract_features, LearnedRanker (LightGBM)
+    data.py          shared CSV → UserProfile loader
+    server.py        FastAPI deployment (gated on [serve] extra)
+scripts/
+    evaluate.py      compare random / rules / rules+embeddings / learned
+    train.py         fit + evaluate + persist a LearnedRanker
+examples/
+    demo.py                 minimal rules-only ranking example
+    embeddings_demo.py      Phase 2 with a real sentence-transformer
+    random_sample_ranking.py  ad-hoc ranking on a CSV sample
+notebooks/
+    01_eda.ipynb            dataset exploration with plots
+    02_evaluation.ipynb     phase 1/2/3 head-to-head comparison
+docs/
+    MODEL_CARD.md           intended use, factors, ethical considerations
+    DATA_CARD.md            schema, provenance, sensitive attributes
+tests/                      ruff + mypy + 50+ pytest tests
 ```
-
-A `Predictor` Protocol (anything with `predict(x) -> Sequence[float]`)
-keeps the test suite model-free — CI never installs LightGBM. The real
-training and evaluation runs against the `[ml]` extra.
-
----
-
-## Run locally
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
-pytest
-python examples/demo.py
-```
-
----
-
-
-
-### Run a random 10-profile ranking sample
-
-In Codespaces (or any shell), you can quickly run a random ranking experiment from the CSV:
-
-```bash
-python examples/random_sample_ranking.py --sample-size 10
-```
-
-Use a seed for reproducible results:
-
-```bash
-python examples/random_sample_ranking.py --sample-size 10 --seed 42
-```
-
-
-If AgeComp looks low/zero in a run, use a fixed seed and inspect the printed `CandAge` + `AgeGap` columns.
-A gap of 10+ years now intentionally maps to `AgeComp = 0.0` in the current ladder rule.
 
 ## Offline evaluation
 
-`hangpost_matching.evaluation` provides standard information-retrieval
-metrics (precision@k, recall@k, MAP@k, NDCG@k) and a generic
-`evaluate_ranker` that runs any `Ranker` against a query set.
+`scripts/evaluate.py` compares random / rules-only / rules+embeddings /
+learned on a query set drawn from the seed CSV. Synthetic relevance labels
+come from `synthesize_relevance` (≥3 of 5 multi-signal thresholds) and are an
+admitted stand-in until real outcome data exists — see `docs/MODEL_CARD.md`.
 
-Until real outcome data (accepts, chats started, retention) is available,
-`synthesize_relevance` produces a deterministic ground-truth label by
-checking whether a candidate hits ≥3 of 5 multi-signal thresholds
-(shared interests, liked topics, hometown, age proximity, mutual
-friends). Because that rule is *thresholded* and the ranker is
-*continuous-weighted*, the two are structurally different — so the
-metrics still measure ranking quality.
-
-Run the included comparison script:
-
-```bash
-python scripts/evaluate.py                  # rules vs. random baseline
-python scripts/evaluate.py --queries 100 --k 5
-python scripts/evaluate.py --with-embeddings                                  # + Phase 2
-python scripts/evaluate.py --with-embeddings --learned-model models/learned_ranker.joblib   # + Phase 3
-```
-
-Example output on the seed dataset (rules-only on 50 queries, k=10):
+Sample output (50 queries, k=10, no `[ml]` extra):
 
 ```
 System                     P@10     R@10   NDCG@10    MAP@10
@@ -172,52 +137,18 @@ random                    0.196    0.013     0.188     0.079
 rules_only                0.982    0.067     0.988     0.979
 ```
 
-The full Phase 1 / Phase 2 / Phase 3 numbers depend on running with the
-`[ml]` extra installed (sentence-transformers + LightGBM) and are
-reproduced by `python scripts/train.py --with-embeddings`.
+The full Phase 1 / 2 / 3 numbers (and accompanying plots) live in
+`notebooks/02_evaluation.ipynb` — run with the `[ml]` extra installed.
 
-## Suggested next steps
+## Test discipline
 
-1. ~~Add profile text embeddings (`semantic_similarity`) to the score breakdown.~~ ✅ Phase 2 done.
-2. ~~Build an offline evaluation harness (precision@k, recall@k, NDCG@k, MAP@k).~~ ✅ done.
-3. ~~Train a learning-to-rank model (LightGBM `LGBMRanker`) on labeled queries.~~ ✅ Phase 3 done.
-4. Run `scripts/train.py --with-embeddings` in a `[ml]`-installed env and record the
-   rules / rules+embeddings / learned numbers in this README.
-5. Add EDA notebooks (`notebooks/`) exploring the seed dataset:
-   distributions, correlations between signals, embedding visualizations (UMAP/t-SNE).
-6. Log real recommendation outcomes (`shown`, `clicked`, `friend_request_sent`,
-   `accepted`) so synthetic labels can eventually be replaced with real ones.
-7. Author a model card (`docs/MODEL_CARD.md`) and data card (`docs/DATA_CARD.md`).
-8. Wrap the ranker in a small FastAPI service + Dockerfile for a deployment story.
+Heavy ML dependencies (`numpy`, `sentence-transformers`, `lightgbm`,
+`joblib`, `fastapi`) are confined to optional extras and imported lazily.
+CI installs only `[dev]` and runs the full test suite against stubs
+satisfying the `Embedder` and `Predictor` Protocols. Real model behaviour is
+exercised by `scripts/train.py`, `scripts/evaluate.py`, the notebooks, and
+the Docker image — none of which the test suite touches.
 
+## License
 
-
-## Ranking behavior update
-
-To align with your product direction:
-
-- Most profiles will have **no mutual friends** and are ranked by the standard weighted criteria.
-- Profiles that **do** have mutual friends receive a distinct `friend_common_boost` and are prioritized in final sorting.
-- Age compatibility now uses a sequential step-down ladder: same age = 1.0, 1 year apart = 0.9, 2 years = 0.8, ... 10+ years = 0.0.
-- This gives you a two-lane ranking system: (1) socially connected candidates first, then (2) everyone else ranked by compatibility signals.
-
-## Test data
-
-A seed CSV with profile records for ranking experiments is available at:
-
-- `data/test_profiles.csv`
-
-Columns are ordered by your stated priority: friends in common, age closeness, college, hometown, degree, job, homestate, hobbies/activities/sports/games/skills/certifications, interests/likes, fan-of categories, faith/religion, and travel.
-
-Mutual friends now act as a separate high-priority ranking signal: profiles with friend overlap receive a social boost and are sorted ahead of profiles with no friend overlap.
-
-
-## Learning-friendly code style
-
-This project is intentionally written with beginner-friendly comments and explicit naming so you can learn as you read.
-
-When adding new code, prefer:
-- clear docstrings
-- step-by-step comments for non-obvious logic
-- explainable score breakdowns over hidden “magic” behavior
-
+MIT — see `LICENSE`.

@@ -76,12 +76,22 @@ real outcome data exists.
 
 ### Test discipline
 
-Heavy ML deps (`lightgbm`, `sentence-transformers`, `numpy`, `joblib`)
-are confined to the `[ml]` extra and imported lazily. CI installs only
+Heavy dependencies (`lightgbm`, `sentence-transformers`, `numpy`,
+`joblib`, `fastapi`, `pydantic`, `uvicorn`) are confined to optional
+extras (`[ml]`, `[serve]`) and imported lazily. CI installs only
 `[dev]` and runs the full test suite against stubs that satisfy the
-`Embedder` and `Predictor` Protocols. Real model behaviour is covered
-by `scripts/train.py` and `scripts/evaluate.py` against the `[ml]`
-install.
+`Embedder` and `Predictor` Protocols; server tests skip themselves
+when `fastapi` is not present. Real model + service behaviour is
+covered by `scripts/train.py`, `scripts/evaluate.py`, the notebooks,
+and the Docker image.
+
+### Documentation artifacts
+
+- `docs/MODEL_CARD.md` — intended use, factors, metrics, ethical caveats.
+- `docs/DATA_CARD.md` — dataset schema, provenance, sensitive fields.
+- `notebooks/01_eda.ipynb` — dataset exploration with plots.
+- `notebooks/02_evaluation.ipynb` — Phase 1/2/3 head-to-head with plots.
+- `Dockerfile` + `[serve]` extra — FastAPI deployment story.
 
 ---
 
