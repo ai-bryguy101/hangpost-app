@@ -34,7 +34,9 @@ def test_compute_match_score_prefers_overlap() -> None:
 
 
 def test_rank_candidates_descending() -> None:
-    source = UserProfile(user_id="source", interests={"a"}, liked_topics={"x"}, location="nyc", age=24)
+    source = UserProfile(
+        user_id="source", interests={"a"}, liked_topics={"x"}, location="nyc", age=24
+    )
     c1 = UserProfile(user_id="c1", interests={"a"}, liked_topics={"x"}, location="nyc", age=24)
     c2 = UserProfile(user_id="c2", interests={"b"}, liked_topics={"y"}, location="la", age=40)
 

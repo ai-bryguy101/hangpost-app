@@ -10,12 +10,12 @@ SRC_PATH = REPO_ROOT / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
-from hangpost_matching import UserProfile, rank_candidates
+from hangpost_matching import UserProfile, rank_candidates  # noqa: E402
 
 
 def _tokenize(cell: str) -> set[str]:
     """Split semicolon-separated text into lowercase tokens."""
-    return {token.strip().lower() for token in cell.split(';') if token.strip()}
+    return {token.strip().lower() for token in cell.split(";") if token.strip()}
 
 
 def _profile_from_row(index: int, row: dict[str, str]) -> UserProfile:
@@ -54,8 +54,9 @@ def run_sample(csv_path: Path, sample_size: int, seed: int | None = None) -> Non
 
     sampled_rows = random.sample(rows, sample_size)
     profiles = [_profile_from_row(i, row) for i, row in enumerate(sampled_rows)]
-    profile_name_by_id = {profile.user_id: row['name'] for profile, row in zip(profiles, sampled_rows)}
-    row_by_id = {profile.user_id: row for profile, row in zip(profiles, sampled_rows)}
+    paired = list(zip(profiles, sampled_rows, strict=True))
+    profile_name_by_id = {profile.user_id: row["name"] for profile, row in paired}
+    row_by_id = {profile.user_id: row for profile, row in paired}
 
     source = profiles[0]
     candidates = profiles[1:]
@@ -64,8 +65,12 @@ def run_sample(csv_path: Path, sample_size: int, seed: int | None = None) -> Non
     source_name = sampled_rows[0]["name"]
     print(f"Source profile: {source_name} ({source.user_id})")
     print(f"Source age: {source.age}")
+    header = (
+        "Rank | Name | CandAge | AgeGap | AgeComp | Score | "
+        "Mutual? | SocialBoost | Location | Interests"
+    )
     print("-" * 120)
-    print("Rank | Name | CandAge | AgeGap | AgeComp | Score | Mutual? | SocialBoost | Location | Interests")
+    print(header)
     print("-" * 120)
 
     for rank, (candidate, breakdown) in enumerate(ranked, start=1):
@@ -82,9 +87,23 @@ def run_sample(csv_path: Path, sample_size: int, seed: int | None = None) -> Non
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Rank a random sample of CSV profiles.")
-    parser.add_argument("--csv", default="data/test_profiles.csv", help="Path to CSV dataset")
-    parser.add_argument("--sample-size", type=int, default=10, help="How many random profiles to sample")
-    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducible sampling")
+    parser.add_argument(
+        "--csv",
+        default="data/test_profiles.csv",
+        help="Path to CSV dataset",
+    )
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=10,
+        help="How many random profiles to sample",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducible sampling",
+    )
     args = parser.parse_args()
 
     run_sample(Path(args.csv), args.sample_size, args.seed)

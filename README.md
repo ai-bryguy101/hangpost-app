@@ -26,6 +26,22 @@ In short: start with rules + math, then add AI as a feature, then let ML optimiz
 - Keep scoring explainable through component-level breakdowns.
 - Support hard constraints (dealbreakers) and soft preferences (weights).
 
+## How location works in Hangpost (important)
+
+Hangpost is a location-based app, but **physical distance is not a ranking signal**.
+
+- **Current location (real-time)** is a *hard pre-filter*: the app only ever
+  shows users profiles within a small radius of where they are right now.
+  Profiles outside the radius are removed before the matching engine runs.
+  By the time `rank_candidates` is called, every candidate is already
+  in-radius, so the ranker does **not** know or care about physical distance.
+- **Hometown** is a *soft matching signal*: two users from the same hometown
+  rank higher because shared origin is a friendship cue. The `location` field
+  on `UserProfile` represents hometown today, not current location.
+
+This separation keeps the matching engine focused on compatibility, while the
+upstream candidate-retrieval layer (database / geo-index) enforces the radius.
+
 ## Current implementation
 
 - `UserProfile` model with structured features:
