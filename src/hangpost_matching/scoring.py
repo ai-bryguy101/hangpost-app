@@ -1,7 +1,7 @@
 """Core scoring and ranking logic.
 
 High-level flow:
-1) Compute component scores (overlap, age closeness, etc.)
+1) Compute component scores (overlap, age closeness, semantic similarity, etc.)
 2) Build a weighted base compatibility score
 3) Apply separate social boost when mutual friends exist
 4) Sort candidates with a two-lane strategy:
@@ -9,6 +9,9 @@ High-level flow:
    - lane B: profiles without mutual friends
 """
 
+from collections.abc import Mapping
+
+from .embeddings import Vector, cosine_similarity
 from .models import MatchBreakdown, ScoringWeights, UserProfile
 
 
@@ -62,12 +65,41 @@ def _age_compatibility_score(source: UserProfile, candidate: UserProfile) -> flo
     return max(compatibility, 0.0)
 
 
+def _semantic_similarity_score(
+    source: UserProfile,
+    candidate: UserProfile,
+    profile_embeddings: Mapping[str, Vector] | None,
+) -> float:
+    """Cosine similarity between precomputed profile embeddings, clamped to [0, 1].
+
+    Returns 0.0 when no embedding map is supplied or either user is absent.
+    Negative cosine values are zeroed because they represent semantic
+    *opposition*, which we don't want to reward or penalize at this stage.
+
+    The text that produced these embeddings is auto-synthesized from each
+    user's structured fields — see `hangpost_matching.embeddings.profile_to_text`.
+    """
+    if profile_embeddings is None:
+        return 0.0
+    source_vec = profile_embeddings.get(source.user_id)
+    candidate_vec = profile_embeddings.get(candidate.user_id)
+    if source_vec is None or candidate_vec is None:
+        return 0.0
+    return max(cosine_similarity(source_vec, candidate_vec), 0.0)
+
+
 def compute_match_score(
     source: UserProfile,
     candidate: UserProfile,
     weights: ScoringWeights | None = None,
+    profile_embeddings: Mapping[str, Vector] | None = None,
 ) -> MatchBreakdown:
     """Compute full explainable score breakdown for a source/candidate pair.
+
+    Pass `profile_embeddings={user_id: vector, ...}` to enable Phase 2
+    semantic similarity. The ranker itself never loads a model — see
+    `hangpost_matching.embeddings.embed_profiles` for how to precompute the
+    map once for a batch of candidates.
 
     This function is intentionally explicit and verbose for readability.
     """
@@ -87,22 +119,27 @@ def compute_match_score(
 
     location_match = _location_score(source, candidate)
     age_compatibility = _age_compatibility_score(source, candidate)
+    semantic_similarity = _semantic_similarity_score(source, candidate, profile_embeddings)
 
     # 2) Weighted base score (normal compatibility lane).
+    # The cap on `total_score` was removed when `semantic_similarity` was
+    # introduced. With six weighted components plus the social boost, capping
+    # at 1.0 silently compressed the top of the distribution and hid signal.
+    # The ranker only cares about ordering, so absolute magnitude is fine.
     base_score = (
         active_weights.interest_overlap * interest_overlap
         + active_weights.liked_topic_overlap * liked_topic_overlap
         + active_weights.mutual_friends * mutual_friends
         + active_weights.location_match * location_match
         + active_weights.age_compatibility * age_compatibility
+        + active_weights.semantic_similarity * semantic_similarity
     )
 
     # 3) Separate social boost lane.
     # If user has mutual friends with candidate, push them upward significantly.
     social_boost = active_weights.friend_common_boost if has_mutual_friends else 0.0
 
-    # Cap final score at 1.0 for easier interpretation.
-    total_score = min(base_score + social_boost, 1.0)
+    total_score = base_score + social_boost
 
     # 4) Return rounded, explainable values.
     return MatchBreakdown(
@@ -114,6 +151,7 @@ def compute_match_score(
         mutual_friends=round(mutual_friends, 6),
         location_match=round(location_match, 6),
         age_compatibility=round(age_compatibility, 6),
+        semantic_similarity=round(semantic_similarity, 6),
     )
 
 
@@ -121,6 +159,7 @@ def rank_candidates(
     source: UserProfile,
     candidates: list[UserProfile],
     weights: ScoringWeights | None = None,
+    profile_embeddings: Mapping[str, Vector] | None = None,
 ) -> list[tuple[UserProfile, MatchBreakdown]]:
     """Rank candidates for one source profile.
 
@@ -133,7 +172,8 @@ def rank_candidates(
     - then non-connected candidates by compatibility
     """
     scored = [
-        (candidate, compute_match_score(source, candidate, weights)) for candidate in candidates
+        (candidate, compute_match_score(source, candidate, weights, profile_embeddings))
+        for candidate in candidates
     ]
     return sorted(
         scored,

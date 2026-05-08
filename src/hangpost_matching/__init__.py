@@ -1,12 +1,61 @@
 """Hangpost matching engine package."""
 
+from .data import load_profiles_from_csv
+from .embeddings import (
+    Embedder,
+    SentenceTransformerEmbedder,
+    Vector,
+    cosine_similarity,
+    embed_profiles,
+    profile_to_text,
+)
+from .evaluation import (
+    EvaluationResult,
+    Query,
+    Ranker,
+    average_precision_at_k,
+    build_queries,
+    evaluate_ranker,
+    make_random_ranker,
+    make_rules_ranker,
+    ndcg_at_k,
+    precision_at_k,
+    recall_at_k,
+    split_queries,
+    synthesize_relevance,
+)
+from .learning import FEATURE_NAMES, LearnedRanker, Predictor, extract_features
 from .models import MatchBreakdown, ScoringWeights, UserProfile
 from .scoring import compute_match_score, rank_candidates
 
 __all__ = [
-    "UserProfile",
-    "ScoringWeights",
+    "FEATURE_NAMES",
+    "Embedder",
+    "EvaluationResult",
+    "LearnedRanker",
     "MatchBreakdown",
+    "Predictor",
+    "Query",
+    "Ranker",
+    "ScoringWeights",
+    "SentenceTransformerEmbedder",
+    "UserProfile",
+    "Vector",
+    "average_precision_at_k",
+    "build_queries",
     "compute_match_score",
+    "cosine_similarity",
+    "embed_profiles",
+    "evaluate_ranker",
+    "extract_features",
+    "load_profiles_from_csv",
+    "make_random_ranker",
+    "make_rules_ranker",
+    "ndcg_at_k",
+    "precision_at_k",
+    "profile_to_text",
     "rank_candidates",
+    "recall_at_k",
+    "split_queries",
+    "synthesize_relevance",
 ]

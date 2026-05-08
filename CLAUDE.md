@@ -29,16 +29,69 @@ small radius**. The radius rule is a **hard pre-filter**, not a ranking signal.
 
 ---
 
+## Profile semantic representation — auto-synthesized, NOT user-written
+
+Hangpost users do **not** write a free-text bio. Every profile's "semantic
+representation" is built deterministically from the structured fields they
+already provide (interests, liked topics, hometown, age, etc.). That
+synthesized string is what gets embedded for the `semantic_similarity`
+ranking signal.
+
+- Implementation: `hangpost_matching.embeddings.profile_to_text(profile)`
+  returns the natural-language string the embedder consumes. The matching
+  engine never reads a user-authored bio.
+- Do **not** add a `bio` field to `UserProfile`, do not assume users will
+  hand-write bios, and do not surface "write your bio" UI in any spec.
+- If a future feature needs more text per user (e.g., "what I'm looking for"),
+  add it as a new structured prompt and extend `profile_to_text` — never as
+  a generic `bio` blob.
+
+---
+
 ## The 3-phase ML roadmap
 
-1. **Phase 1 — Deterministic weighted scoring** *(current state)*
+1. **Phase 1 — Deterministic weighted scoring** *(done)*
    Rules + Jaccard overlaps + step-down age ladder + mutual-friend social boost.
-2. **Phase 2 — Text embeddings**
-   Add `bio_similarity` from a sentence-transformer model as one more signal in
-   the same weighted framework.
-3. **Phase 3 — Supervised learning-to-rank**
-   Once outcome labels (accepts, chats started, retention) exist, train a
-   LightGBM or similar ranker that learns the weights from data.
+2. **Phase 2 — Text embeddings** *(done)*
+   `bio_similarity` via cosine similarity between sentence-transformer
+   embeddings, integrated into the same weighted framework. The ranker
+   itself is model-free — it accepts a precomputed `{user_id: vector}`
+   map. The optional `[ml]` extra wires up `SentenceTransformerEmbedder`.
+3. **Phase 3 — Supervised learning-to-rank** *(scaffold done; needs real outcome labels)*
+   `hangpost_matching.learning.LearnedRanker` wraps a LightGBM `LGBMRanker`
+   (LambdaRank objective). Features are the same components Phases 1+2
+   produce. `scripts/train.py` fits the model on synthetic labels for now;
+   swap in real outcome labels (accepts, chats started, retention) as soon
+   as those become available.
+
+### Evaluation harness *(done)*
+
+`hangpost_matching.evaluation` implements precision@k, recall@k, MAP@k,
+and NDCG@k, plus an `evaluate_ranker` that runs any `Ranker` over a
+query set, plus `build_queries` / `split_queries` / `make_rules_ranker`
+/ `make_random_ranker` so both `scripts/evaluate.py` and `scripts/train.py`
+share one source of truth. `synthesize_relevance` provides a
+deterministic stand-in ground truth from the structured fields until
+real outcome data exists.
+
+### Test discipline
+
+Heavy dependencies (`lightgbm`, `sentence-transformers`, `numpy`,
+`joblib`, `fastapi`, `pydantic`, `uvicorn`) are confined to optional
+extras (`[ml]`, `[serve]`) and imported lazily. CI installs only
+`[dev]` and runs the full test suite against stubs that satisfy the
+`Embedder` and `Predictor` Protocols; server tests skip themselves
+when `fastapi` is not present. Real model + service behaviour is
+covered by `scripts/train.py`, `scripts/evaluate.py`, the notebooks,
+and the Docker image.
+
+### Documentation artifacts
+
+- `docs/MODEL_CARD.md` — intended use, factors, metrics, ethical caveats.
+- `docs/DATA_CARD.md` — dataset schema, provenance, sensitive fields.
+- `notebooks/01_eda.ipynb` — dataset exploration with plots.
+- `notebooks/02_evaluation.ipynb` — Phase 1/2/3 head-to-head with plots.
+- `Dockerfile` + `[serve]` extra — FastAPI deployment story.
 
 ---
 

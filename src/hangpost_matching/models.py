@@ -69,6 +69,12 @@ class ScoringWeights:
     # Age-closeness strength inside base score.
     age_compatibility: float = 0.25
 
+    # Phase 2 signal: cosine similarity between auto-synthesized profile
+    # embeddings. The "profile text" is built deterministically from the
+    # structured fields above — users do NOT hand-write a bio.
+    # See `hangpost_matching.embeddings.profile_to_text`.
+    semantic_similarity: float = 0.20
+
     # Separate social boost if candidate shares any mutual friends.
     friend_common_boost: float = 0.35
 
@@ -83,7 +89,7 @@ class MatchBreakdown:
     - inspect or log component scores for future ML training data
     """
 
-    # Final score used for ordering (after social boost, capped at 1.0).
+    # Final score used for ordering (weighted base + social boost).
     total_score: float
 
     # Whether at least 1 mutual friend exists.
@@ -98,3 +104,4 @@ class MatchBreakdown:
     mutual_friends: float
     location_match: float
     age_compatibility: float
+    semantic_similarity: float
