@@ -24,8 +24,10 @@ available.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import random
+import struct
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -181,6 +183,190 @@ def synthesize_relevance(source: UserProfile, candidate: UserProfile) -> bool:
         bool(source.mutual_friend_ids & candidate.mutual_friend_ids),
     ]
     return sum(signals) >= 3
+
+
+# ---------- realistic label generators ----------
+#
+# The thresholded `synthesize_relevance` above is structurally different
+# from the weighted-sum ranker, but it still uses exactly the same five
+# signals the ranker scores on. That makes the rules baseline look
+# artificially strong (P@10 near 1.0) and gives the learned ranker
+# little headroom.
+#
+# The two generators below close that gap so the evaluation reflects a
+# more realistic ceiling:
+#
+#   make_noisy_relevance_fn       — flip a fraction of `synthesize_relevance`
+#                                    labels at random. Useful for ablation
+#                                    studies that ask "how much does my
+#                                    model degrade as label noise climbs?"
+#   make_simulated_outcome_fn     — model outcomes as a *logistic mixture*
+#                                    of (a) continuous observable affinity
+#                                    and (b) cosine similarity between
+#                                    hidden per-user "personality" vectors
+#                                    the ranker can't see. Adds Bernoulli
+#                                    noise on top. This is the closest
+#                                    stand-in for real interaction data
+#                                    until production labels exist.
+
+
+def _stable_personality_vector(user_id: str, dims: int = 8) -> list[float]:
+    """Deterministically map a user_id to a `dims`-length float vector.
+
+    The vector is the same every call, so labels are reproducible across
+    train and evaluation. The mapping is unrelated to any observable
+    profile field — that is the point: it represents a "hidden trait"
+    the ranker has no access to, the way real user behaviour depends on
+    factors no feature captures (mood, time-of-day, prior history).
+    """
+    digest = hashlib.sha256(user_id.encode("utf-8")).digest()
+    # Each 4-byte chunk → one float in [-1.0, 1.0).
+    needed = dims * 4
+    if len(digest) < needed:
+        digest = (digest * ((needed // len(digest)) + 1))[:needed]
+    values: list[float] = []
+    for i in range(dims):
+        (raw,) = struct.unpack_from("<i", digest, i * 4)
+        # Map int32 → [-1.0, 1.0). 2**31 is the magnitude of int32.
+        values.append(raw / 2**31)
+    return values
+
+
+def _continuous_observable_affinity(source: UserProfile, candidate: UserProfile) -> float:
+    """Smooth version of the synthesize_relevance signals, in [0.0, 1.0].
+
+    Continuous so the resulting outcome probability isn't a step function
+    of the same thresholds the rules ranker uses. This is the part of
+    affinity the ranker *can* see — features it has access to.
+    """
+    interest_overlap = len(source.interests & candidate.interests)
+    liked_overlap = len(source.liked_topics & candidate.liked_topics)
+    same_hometown = 1.0 if source.location and source.location == candidate.location else 0.0
+    if source.age is not None and candidate.age is not None:
+        age_closeness = max(0.0, 1.0 - abs(source.age - candidate.age) / 15.0)
+    else:
+        age_closeness = 0.0
+    mutual_friends = len(source.mutual_friend_ids & candidate.mutual_friend_ids)
+
+    # Weighted sum with diminishing returns on count-style signals.
+    raw = (
+        0.30 * min(interest_overlap / 4.0, 1.0)
+        + 0.25 * min(liked_overlap / 4.0, 1.0)
+        + 0.20 * same_hometown
+        + 0.15 * age_closeness
+        + 0.10 * min(mutual_friends / 3.0, 1.0)
+    )
+    return min(max(raw, 0.0), 1.0)
+
+
+def _sigmoid(x: float) -> float:
+    if x >= 0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    z = math.exp(x)
+    return z / (1.0 + z)
+
+
+def make_noisy_relevance_fn(
+    noise_level: float = 0.15,
+    seed: int = 0,
+    base_fn: Callable[[UserProfile, UserProfile], bool] = synthesize_relevance,
+) -> Callable[[UserProfile, UserProfile], bool]:
+    """Wrap `base_fn` with deterministic per-pair Bernoulli label flips.
+
+    `noise_level` ∈ [0.0, 1.0] is the probability a label flips. The flip
+    decision is hashed from `(source_id, candidate_id, seed)` so calling
+    the returned function twice gives the same answer (essential for
+    reproducible train/test splits).
+
+    Use this for ablation studies: train at one noise level, evaluate at
+    a different one to see how robust your ranker is.
+    """
+    if not 0.0 <= noise_level <= 1.0:
+        raise ValueError(f"noise_level must be in [0, 1], got {noise_level}")
+
+    def fn(source: UserProfile, candidate: UserProfile) -> bool:
+        truth = base_fn(source, candidate)
+        if noise_level == 0.0:
+            return truth
+        rng = random.Random(f"noise:{seed}:{source.user_id}:{candidate.user_id}")
+        if rng.random() < noise_level:
+            return not truth
+        return truth
+
+    return fn
+
+
+def make_simulated_outcome_fn(
+    seed: int = 0,
+    hidden_weight: float = 0.5,
+    observable_weight: float = 1.5,
+    bias: float = -1.0,
+    noise_level: float = 0.10,
+) -> Callable[[UserProfile, UserProfile], bool]:
+    """Return a relevance fn driven by a logistic mixture + hidden confounders.
+
+    Outcome model:
+
+        observable = _continuous_observable_affinity(source, candidate)  ∈ [0, 1]
+        hidden     = cosine(personality(source), personality(candidate)) ∈ [-1, 1]
+        logit      = bias + observable_weight * observable
+                          + hidden_weight     * hidden
+        prob       = sigmoid(logit)
+        label      = (deterministic uniform in [0, 1)) < prob
+        + Bernoulli flip with probability `noise_level`
+
+    Key property: `hidden` depends on `user_id` only, so the ranker — which
+    sees the same observable features either way — cannot perfectly recover
+    the label. This gives the learned model real headroom over the rules
+    baseline (good), and prevents either from approaching P@10 = 1.0
+    against this generator (also good — realistic).
+    """
+    if not 0.0 <= noise_level <= 1.0:
+        raise ValueError(f"noise_level must be in [0, 1], got {noise_level}")
+
+    def fn(source: UserProfile, candidate: UserProfile) -> bool:
+        observable = _continuous_observable_affinity(source, candidate)
+        src_vec = _stable_personality_vector(source.user_id)
+        cand_vec = _stable_personality_vector(candidate.user_id)
+        # Cosine similarity, hand-rolled to avoid the embeddings import cycle.
+        dot = sum(a * b for a, b in zip(src_vec, cand_vec, strict=True))
+        norm_s = math.sqrt(sum(a * a for a in src_vec))
+        norm_c = math.sqrt(sum(a * a for a in cand_vec))
+        hidden = dot / (norm_s * norm_c) if norm_s > 0 and norm_c > 0 else 0.0
+
+        logit = bias + observable_weight * observable + hidden_weight * hidden
+        prob = _sigmoid(logit)
+
+        draw_rng = random.Random(f"draw:{seed}:{source.user_id}:{candidate.user_id}")
+        label = draw_rng.random() < prob
+
+        if noise_level > 0.0:
+            flip_rng = random.Random(f"flip:{seed}:{source.user_id}:{candidate.user_id}")
+            if flip_rng.random() < noise_level:
+                label = not label
+
+        return label
+
+    return fn
+
+
+# Friendly registry so CLI scripts can pick a labeller by name.
+RELEVANCE_GENERATORS: dict[str, Callable[[int], Callable[[UserProfile, UserProfile], bool]]] = {
+    "rule_based": lambda _seed: synthesize_relevance,
+    "noisy": lambda seed: make_noisy_relevance_fn(seed=seed),
+    "simulated": lambda seed: make_simulated_outcome_fn(seed=seed),
+}
+
+
+def get_relevance_fn(name: str, seed: int = 0) -> Callable[[UserProfile, UserProfile], bool]:
+    """Look up a relevance generator by short name."""
+    try:
+        factory = RELEVANCE_GENERATORS[name]
+    except KeyError as exc:
+        choices = ", ".join(sorted(RELEVANCE_GENERATORS))
+        raise ValueError(f"Unknown relevance fn {name!r}. Choices: {choices}") from exc
+    return factory(seed)
 
 
 def build_queries(

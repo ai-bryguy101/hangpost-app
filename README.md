@@ -124,11 +124,27 @@ tests/                      ruff + mypy + 50+ pytest tests
 ## Offline evaluation
 
 `scripts/evaluate.py` compares random / rules-only / rules+embeddings /
-learned on a query set drawn from the seed CSV. Synthetic relevance labels
-come from `synthesize_relevance` (≥3 of 5 multi-signal thresholds) and are an
-admitted stand-in until real outcome data exists — see `docs/MODEL_CARD.md`.
+learned on a query set drawn from the seed CSV. Pick how labels are
+generated with `--relevance`:
 
-Sample output (50 queries, k=10, no `[ml]` extra):
+| Generator | What it does | When to use |
+|---|---|---|
+| `rule_based` *(default)* | Thresholded multi-signal rule from `synthesize_relevance`. | Sanity check; matches historical baselines. |
+| `noisy` | `rule_based` with deterministic per-pair Bernoulli flips. | Robustness / label-noise ablations. |
+| `simulated` | Outcomes sampled from a logistic mixture of continuous observable affinity **and** a hidden per-user "personality" vector the ranker cannot see, with Bernoulli noise on top. | Realistic ceiling — keeps the rules baseline honest and gives the learned ranker room to win. |
+
+All three are pure functions of `(source, candidate)` once a seed is
+fixed, so train/test splits stay reproducible.
+
+```bash
+python scripts/evaluate.py                          # rule_based labels
+python scripts/evaluate.py --relevance simulated    # realistic ceiling
+python scripts/evaluate.py --with-embeddings \
+    --relevance simulated \
+    --learned-model models/learned_ranker.joblib
+```
+
+Sample output (50 queries, k=10, no `[ml]` extra, `rule_based` labels):
 
 ```
 System                     P@10     R@10   NDCG@10    MAP@10
@@ -137,8 +153,33 @@ random                    0.196    0.013     0.188     0.079
 rules_only                0.982    0.067     0.988     0.979
 ```
 
-The full Phase 1 / 2 / 3 numbers (and accompanying plots) live in
-`notebooks/02_evaluation.ipynb` — run with the `[ml]` extra installed.
+The `rules_only` row pinning near 1.0 is the label-leakage tell —
+`rule_based` labels share their features with the rules ranker. Run with
+`--relevance simulated` to see realistic numbers; the full Phase 1 / 2 / 3
+comparison and plots live in `notebooks/02_evaluation.ipynb`.
+
+## Experiment tracking
+
+`scripts/train.py` can log every run to MLflow. The tracker is fully
+optional and lazily imported — without `--mlflow` nothing about
+training changes.
+
+```bash
+pip install -e ".[ml]"                  # mlflow ships in the [ml] extra
+python scripts/train.py --mlflow --relevance simulated --with-embeddings
+
+mlflow ui --backend-store-uri ./mlruns  # browse runs at http://localhost:5000
+```
+
+Each run logs:
+
+- **Params** — dataset path, query count, seed, train fraction, k,
+  `--relevance` choice, embeddings on/off, `n_estimators`, `learning_rate`,
+  `num_leaves`, train/test query counts.
+- **Metrics** — precision/recall/NDCG/MAP at k for every ranker that runs
+  on the held-out split (`random`, `rules_only`, `rules+embeddings`,
+  `learned`), namespaced by ranker so dashboards diff cleanly.
+- **Artifact** — the saved `LearnedRanker.joblib`.
 
 ## Test discipline
 

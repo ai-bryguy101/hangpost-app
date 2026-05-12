@@ -27,11 +27,13 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from hangpost_matching import (  # noqa: E402
+    RELEVANCE_GENERATORS,
     EvaluationResult,
     Query,
     Ranker,
     build_queries,
     evaluate_ranker,
+    get_relevance_fn,
     load_profiles_from_csv,
     make_random_ranker,
     make_rules_ranker,
@@ -75,12 +77,26 @@ def main() -> None:
         default=None,
         help="Path to a saved LearnedRanker (Phase 3) to evaluate",
     )
+    parser.add_argument(
+        "--relevance",
+        choices=sorted(RELEVANCE_GENERATORS),
+        default="rule_based",
+        help=(
+            "Which relevance label generator to use. 'rule_based' is the "
+            "original thresholded synthesizer; 'noisy' flips a fraction of "
+            "those labels; 'simulated' samples outcomes from a logistic "
+            "model that mixes observable affinity with a hidden personality "
+            "vector the ranker can't see (more realistic ceiling)."
+        ),
+    )
     args = parser.parse_args()
 
     profiles = load_profiles_from_csv(Path(args.csv))
     print(f"Loaded {len(profiles)} profiles from {args.csv}")
 
-    queries = build_queries(profiles, args.queries, args.seed)
+    relevance_fn = get_relevance_fn(args.relevance, args.seed)
+    print(f"Relevance generator: {args.relevance}")
+    queries = build_queries(profiles, args.queries, args.seed, relevance_fn=relevance_fn)
     queries_with_relevant = [q for q in queries if q[2]]
     avg_relevant = (
         sum(len(q[2]) for q in queries_with_relevant) / len(queries_with_relevant)
