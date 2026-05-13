@@ -50,9 +50,12 @@ Subgroups likely to influence model behaviour:
 - **Age.** The age-compatibility component is a 10%-per-year ladder that
   zeroes at gaps ≥10 years. Older users in mostly-younger geographies
   will see fewer in-lane candidates.
-- **Hometown rarity.** The `location_match` signal rewards exact hometown
-  matches. Users from common hometowns ("Boston", "New York") will see
-  this signal fire more often than users from rare hometowns.
+- **Hometown / college rarity.** The `hometown_match` and `college_match`
+  signals reward exact-string matches. Users from common hometowns
+  ("Boston", "New York") or large universities will see these signals
+  fire more often than users from rare hometowns or small / international
+  schools. The two signals are independent, so a candidate can light up
+  one without the other.
 - **Mutual-friend density.** New users with no graph edges can never
   enter the social-boost lane and will rank below anyone with even one
   mutual friend, regardless of compatibility.

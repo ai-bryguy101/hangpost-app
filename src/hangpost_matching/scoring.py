@@ -38,9 +38,28 @@ def _bounded_ratio(value: float, max_value: float) -> float:
     return min(max(value / max_value, 0.0), 1.0)
 
 
-def _location_score(source: UserProfile, candidate: UserProfile) -> float:
-    """Simple exact-match location score."""
-    if source.location and candidate.location and source.location == candidate.location:
+def _hometown_score(source: UserProfile, candidate: UserProfile) -> float:
+    """Simple exact-match hometown score.
+
+    Hometown is the place a user grew up — a soft matching signal. This is
+    NOT the radius pre-filter (the radius is applied upstream of the
+    ranker; see PRODUCT_VISION.md).
+    """
+    if source.hometown and candidate.hometown and source.hometown == candidate.hometown:
+        return 1.0
+    return 0.0
+
+
+def _college_score(source: UserProfile, candidate: UserProfile) -> float:
+    """Simple exact-match college score.
+
+    Same-college is a peer-strength friendship cue to same-hometown — two
+    users who went to the same university have a strong conversation
+    starter even when they grew up in different cities. Hometown and
+    college contribute independently, so a user can match on one, the
+    other, or both.
+    """
+    if source.college and candidate.college and source.college == candidate.college:
         return 1.0
     return 0.0
 
@@ -117,20 +136,22 @@ def compute_match_score(
     mutual_friends = _bounded_ratio(mutual_friend_count, 20)
     has_mutual_friends = mutual_friend_count > 0
 
-    location_match = _location_score(source, candidate)
+    hometown_match = _hometown_score(source, candidate)
+    college_match = _college_score(source, candidate)
     age_compatibility = _age_compatibility_score(source, candidate)
     semantic_similarity = _semantic_similarity_score(source, candidate, profile_embeddings)
 
     # 2) Weighted base score (normal compatibility lane).
     # The cap on `total_score` was removed when `semantic_similarity` was
-    # introduced. With six weighted components plus the social boost, capping
+    # introduced. With seven weighted components plus the social boost, capping
     # at 1.0 silently compressed the top of the distribution and hid signal.
     # The ranker only cares about ordering, so absolute magnitude is fine.
     base_score = (
         active_weights.interest_overlap * interest_overlap
         + active_weights.liked_topic_overlap * liked_topic_overlap
         + active_weights.mutual_friends * mutual_friends
-        + active_weights.location_match * location_match
+        + active_weights.hometown_match * hometown_match
+        + active_weights.college_match * college_match
         + active_weights.age_compatibility * age_compatibility
         + active_weights.semantic_similarity * semantic_similarity
     )
@@ -149,7 +170,8 @@ def compute_match_score(
         interest_overlap=round(interest_overlap, 6),
         liked_topic_overlap=round(liked_topic_overlap, 6),
         mutual_friends=round(mutual_friends, 6),
-        location_match=round(location_match, 6),
+        hometown_match=round(hometown_match, 6),
+        college_match=round(college_match, 6),
         age_compatibility=round(age_compatibility, 6),
         semantic_similarity=round(semantic_similarity, 6),
     )

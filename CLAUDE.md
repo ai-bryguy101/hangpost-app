@@ -20,7 +20,7 @@ small radius**. The radius rule is a **hard pre-filter**, not a ranking signal.
 | Concept | What it is | Where it lives |
 |---|---|---|
 | **Current location** (real-time GPS / device location) | A **hard boundary**. Users only ever see profiles from people physically within a small radius of where they are right now. Profiles outside the radius are filtered out *before* the matching engine runs. | The radius filter is **upstream** of the matching engine. By the time `rank_candidates` runs, every candidate is already in-radius. **Distance is not a feature in the score.** Do not add Haversine distance, lat/lon decay, or any current-location signal to `compute_match_score`. |
-| **Hometown** (where the user grew up) | A **soft matching signal**. Two users from the same hometown should rank higher because shared origin is a friendship cue. | This is what the `UserProfile.location` field represents today — it is hometown, **not** current location. The field name is misleading and should eventually be renamed to `hometown`. |
+| **Hometown** (where the user grew up) | A **soft matching signal**. Two users from the same hometown should rank higher because shared origin is a friendship cue. | Stored on `UserProfile.hometown`. Paired with `UserProfile.college` as a peer-strength signal — same college and same hometown are independent friendship cues with equal default weight, and a candidate can light up either, both, or neither. |
 
 ### Implications for any future work
 
@@ -38,8 +38,8 @@ small radius**. The radius rule is a **hard pre-filter**, not a ranking signal.
 
 Hangpost users do **not** write a free-text bio. Every profile's "semantic
 representation" is built deterministically from the structured fields they
-already provide (interests, liked topics, hometown, age, etc.). That
-synthesized string is what gets embedded for the `semantic_similarity`
+already provide (interests, liked topics, hometown, college, age, etc.).
+That synthesized string is what gets embedded for the `semantic_similarity`
 ranking signal.
 
 - Implementation: `hangpost_matching.embeddings.profile_to_text(profile)`
@@ -78,6 +78,11 @@ query set, plus `build_queries` / `split_queries` / `make_rules_ranker`
 share one source of truth. `synthesize_relevance` provides a
 deterministic stand-in ground truth from the structured fields until
 real outcome data exists.
+
+`ablate_weights` runs a per-feature ablation on the rules ranker —
+each weight is zeroed in turn and the metric drop vs. the full-weights
+baseline is reported. `scripts/evaluate.py --ablation` is the CLI entry
+point. Use it to answer "which signal is actually carrying the ranker?"
 
 ### Test discipline
 

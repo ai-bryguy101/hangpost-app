@@ -29,8 +29,14 @@ class UserProfile:
     # Likes/preferences bucket (food/music/philosophy/etc.).
     liked_topics: set[str] = field(default_factory=set)
 
-    # Location value used by simple exact-match scoring.
-    location: str | None = None
+    # Hometown — where the user grew up. Soft matching signal (NOT the
+    # current-location radius pre-filter; that happens upstream).
+    hometown: str | None = None
+
+    # College / university the user attended. A peer-strength signal to
+    # `hometown`: same-college is independently strong even when the
+    # hometowns differ (e.g., two BU grads from different cities).
+    college: str | None = None
 
     # Numeric age used for age-closeness scoring.
     age: int | None = None
@@ -63,8 +69,14 @@ class ScoringWeights:
     # Strength of mutual-friend count ratio inside base score.
     mutual_friends: float = 0.30
 
-    # Exact same-location bonus inside base score.
-    location_match: float = 0.10
+    # Exact same-hometown bonus inside base score.
+    hometown_match: float = 0.10
+
+    # Exact same-college bonus inside base score.
+    # Same weight as `hometown_match` on purpose: shared origin and shared
+    # alma mater are both top-tier friendship cues, and they're independent
+    # (you can match on one without the other).
+    college_match: float = 0.10
 
     # Age-closeness strength inside base score.
     age_compatibility: float = 0.25
@@ -102,6 +114,7 @@ class MatchBreakdown:
     interest_overlap: float
     liked_topic_overlap: float
     mutual_friends: float
-    location_match: float
+    hometown_match: float
+    college_match: float
     age_compatibility: float
     semantic_similarity: float

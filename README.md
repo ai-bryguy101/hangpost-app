@@ -5,8 +5,11 @@ behind one `Ranker` Protocol — each phase is measured against a held-out query
 set, and the strongest one ships:
 
 1. **Phase 1 — Rules.** Deterministic weighted scoring (Jaccard interest/topic
-   overlap, mutual-friend ratio, hometown match, age-compatibility ladder)
-   plus a separate "social-boost" lane for candidates with mutual friends.
+   overlap, mutual-friend ratio, hometown match, college match,
+   age-compatibility ladder) plus a separate "social-boost" lane for
+   candidates with mutual friends. Hometown and college are
+   peer-strength friendship cues with equal default weights — a
+   candidate can match on one without the other.
 2. **Phase 2 — Embeddings.** Adds `semantic_similarity` from
    `sentence-transformers/all-MiniLM-L6-v2`. The text that gets embedded is
    *auto-synthesized* from each user's structured fields by
@@ -90,6 +93,9 @@ signal**.
   Profiles outside the radius are removed before the matching engine runs.
 - **Hometown** is a *soft matching signal*: two users from the same hometown
   rank higher because shared origin is a friendship cue.
+- **College** is a peer-strength signal to hometown — same alma mater is
+  weighted equally and contributes independently (you can match on
+  college, hometown, both, or neither).
 
 This separation keeps the matching engine focused on compatibility while the
 upstream candidate-retrieval layer (database / geo-index) enforces the radius.
@@ -139,10 +145,17 @@ fixed, so train/test splits stay reproducible.
 ```bash
 python scripts/evaluate.py                          # rule_based labels
 python scripts/evaluate.py --relevance simulated    # realistic ceiling
+python scripts/evaluate.py --ablation               # per-feature weight ablation
 python scripts/evaluate.py --with-embeddings \
     --relevance simulated \
     --learned-model models/learned_ranker.joblib
 ```
+
+`--ablation` zeroes each weight in `ScoringWeights` in turn and reports
+the metric drop vs. the full-weights baseline. A positive ΔNDCG means
+the ranker got worse without that signal, so the feature was actually
+carrying weight; a near-zero delta is a sign you can probably drop the
+feature without anyone noticing.
 
 Sample output (50 queries, k=10, no `[ml]` extra, `rule_based` labels):
 

@@ -6,7 +6,7 @@ def test_compute_match_score_prefers_overlap() -> None:
         user_id="source",
         interests={"hiking", "coding"},
         liked_topics={"tech", "travel"},
-        location="austin",
+        hometown="austin",
         age=30,
         mutual_friend_ids={"f1", "f2", "f3"},
     )
@@ -14,7 +14,7 @@ def test_compute_match_score_prefers_overlap() -> None:
         user_id="strong",
         interests={"hiking", "coding", "reading"},
         liked_topics={"tech", "travel"},
-        location="austin",
+        hometown="austin",
         age=29,
         mutual_friend_ids={"f2", "f3"},
     )
@@ -22,7 +22,7 @@ def test_compute_match_score_prefers_overlap() -> None:
         user_id="weak",
         interests={"chess"},
         liked_topics={"finance"},
-        location="seattle",
+        hometown="seattle",
         age=50,
         mutual_friend_ids=set(),
     )
@@ -35,10 +35,10 @@ def test_compute_match_score_prefers_overlap() -> None:
 
 def test_rank_candidates_descending() -> None:
     source = UserProfile(
-        user_id="source", interests={"a"}, liked_topics={"x"}, location="nyc", age=24
+        user_id="source", interests={"a"}, liked_topics={"x"}, hometown="nyc", age=24
     )
-    c1 = UserProfile(user_id="c1", interests={"a"}, liked_topics={"x"}, location="nyc", age=24)
-    c2 = UserProfile(user_id="c2", interests={"b"}, liked_topics={"y"}, location="la", age=40)
+    c1 = UserProfile(user_id="c1", interests={"a"}, liked_topics={"x"}, hometown="nyc", age=24)
+    c2 = UserProfile(user_id="c2", interests={"b"}, liked_topics={"y"}, hometown="la", age=40)
 
     ranked = rank_candidates(source, [c2, c1])
 
@@ -53,12 +53,37 @@ def test_default_weights_prioritize_mutual_friends_then_age() -> None:
     assert weights.age_compatibility > weights.interest_overlap
 
 
+def test_hometown_and_college_are_peer_strength_signals() -> None:
+    """Same-hometown and same-college should contribute equally and independently."""
+    weights = ScoringWeights()
+    assert weights.hometown_match == weights.college_match
+
+    source = UserProfile(user_id="source", hometown="boston", college="bu")
+    hometown_only = UserProfile(user_id="ht", hometown="boston", college="harvard")
+    college_only = UserProfile(user_id="co", hometown="atlanta", college="bu")
+    both = UserProfile(user_id="both", hometown="boston", college="bu")
+    neither = UserProfile(user_id="none", hometown="nyc", college="nyu")
+
+    hometown_score = compute_match_score(source, hometown_only)
+    college_score = compute_match_score(source, college_only)
+    both_score = compute_match_score(source, both)
+    none_score = compute_match_score(source, neither)
+
+    assert hometown_score.hometown_match == 1.0
+    assert hometown_score.college_match == 0.0
+    assert college_score.hometown_match == 0.0
+    assert college_score.college_match == 1.0
+    assert hometown_score.total_score == college_score.total_score
+    assert both_score.total_score > hometown_score.total_score
+    assert hometown_score.total_score > none_score.total_score
+
+
 def test_mutual_friends_get_social_boost_and_priority() -> None:
     source = UserProfile(
         user_id="source",
         interests={"hiking", "coding"},
         liked_topics={"tech", "travel"},
-        location="austin",
+        hometown="austin",
         age=30,
         mutual_friend_ids={"f1", "f2", "f3"},
     )
@@ -67,7 +92,7 @@ def test_mutual_friends_get_social_boost_and_priority() -> None:
         user_id="no_mutual",
         interests={"hiking", "coding"},
         liked_topics={"tech", "travel"},
-        location="austin",
+        hometown="austin",
         age=30,
         mutual_friend_ids=set(),
     )
@@ -76,7 +101,7 @@ def test_mutual_friends_get_social_boost_and_priority() -> None:
         user_id="with_mutual",
         interests={"gaming"},
         liked_topics={"esports"},
-        location="seattle",
+        hometown="seattle",
         age=39,
         mutual_friend_ids={"f2"},
     )

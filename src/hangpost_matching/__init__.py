@@ -10,10 +10,13 @@ from .embeddings import (
     profile_to_text,
 )
 from .evaluation import (
+    ABLATABLE_WEIGHT_FIELDS,
     RELEVANCE_GENERATORS,
+    AblationRow,
     EvaluationResult,
     Query,
     Ranker,
+    ablate_weights,
     average_precision_at_k,
     build_queries,
     evaluate_ranker,
@@ -33,8 +36,10 @@ from .models import MatchBreakdown, ScoringWeights, UserProfile
 from .scoring import compute_match_score, rank_candidates
 
 __all__ = [
+    "ABLATABLE_WEIGHT_FIELDS",
     "FEATURE_NAMES",
     "RELEVANCE_GENERATORS",
+    "AblationRow",
     "Embedder",
     "EvaluationResult",
     "LearnedRanker",
@@ -46,6 +51,7 @@ __all__ = [
     "SentenceTransformerEmbedder",
     "UserProfile",
     "Vector",
+    "ablate_weights",
     "average_precision_at_k",
     "build_queries",
     "compute_match_score",

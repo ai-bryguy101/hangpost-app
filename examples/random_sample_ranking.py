@@ -33,7 +33,8 @@ def _profile_from_row(index: int, row: dict[str, str]) -> UserProfile:
         user_id=f"csv_{index}_{row['name'].lower().replace(' ', '_')}",
         interests=_tokenize(row["hobbies_activities_sports_games_skills_certifications"]),
         liked_topics=_tokenize(row["interests_likes"]),
-        location=row["hometown"].strip().lower() or None,
+        hometown=row["hometown"].strip().lower() or None,
+        college=row.get("college", "").strip().lower() or None,
         age=int(row["age"]),
         mutual_friend_ids=mutual_friend_ids,
     )
@@ -67,11 +68,11 @@ def run_sample(csv_path: Path, sample_size: int, seed: int | None = None) -> Non
     print(f"Source age: {source.age}")
     header = (
         "Rank | Name | CandAge | AgeGap | AgeComp | Score | "
-        "Mutual? | SocialBoost | Location | Interests"
+        "Mutual? | SocialBoost | Hometown | College | Interests"
     )
-    print("-" * 120)
+    print("-" * 130)
     print(header)
-    print("-" * 120)
+    print("-" * 130)
 
     for rank, (candidate, breakdown) in enumerate(ranked, start=1):
         candidate_name = profile_name_by_id[candidate.user_id]
@@ -81,7 +82,8 @@ def run_sample(csv_path: Path, sample_size: int, seed: int | None = None) -> Non
             f"{rank:>4} | {candidate_name:<22} | {candidate_age:>7} | {age_gap:>6} | "
             f"{breakdown.age_compatibility:>7.3f} | {breakdown.total_score:>5.3f} | "
             f"{str(breakdown.has_mutual_friends):<7} | {breakdown.social_boost:>10.3f} | "
-            f"{breakdown.location_match:>8.3f} | {breakdown.interest_overlap:>9.3f}"
+            f"{breakdown.hometown_match:>8.3f} | {breakdown.college_match:>7.3f} | "
+            f"{breakdown.interest_overlap:>9.3f}"
         )
 
 

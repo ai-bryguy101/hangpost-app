@@ -7,7 +7,9 @@ expected values are obvious from the test names alone.
 import math
 
 from hangpost_matching import (
+    ABLATABLE_WEIGHT_FIELDS,
     UserProfile,
+    ablate_weights,
     average_precision_at_k,
     evaluate_ranker,
     get_relevance_fn,
@@ -145,14 +147,14 @@ def test_synthesize_relevance_true_when_three_signals_align() -> None:
         user_id="src",
         interests={"a", "b", "c"},
         liked_topics={"x", "y"},
-        location="austin",
+        hometown="austin",
         age=30,
     )
     matched = UserProfile(
         user_id="match",
         interests={"a", "b"},  # ≥2 shared
         liked_topics={"x", "y"},  # ≥2 shared
-        location="austin",  # same hometown -> 3 signals
+        hometown="austin",  # same hometown -> 3 signals
         age=50,
     )
 
@@ -164,14 +166,14 @@ def test_synthesize_relevance_false_when_only_two_signals() -> None:
         user_id="src",
         interests={"a", "b"},
         liked_topics={"x", "y"},
-        location="austin",
+        hometown="austin",
         age=30,
     )
     weak = UserProfile(
         user_id="weak",
         interests={"a", "b"},  # ≥2 shared (signal 1)
         liked_topics={"q", "r"},
-        location="seattle",
+        hometown="seattle",
         age=29,  # age close (signal 2)
     )
 
@@ -197,14 +199,14 @@ def test_noisy_relevance_with_zero_noise_matches_base() -> None:
         user_id="src",
         interests={"a", "b", "c"},
         liked_topics={"x", "y"},
-        location="austin",
+        hometown="austin",
         age=30,
     )
     cand_match = UserProfile(
         user_id="match",
         interests={"a", "b"},
         liked_topics={"x", "y"},
-        location="austin",
+        hometown="austin",
         age=50,
     )
     cand_no_match = UserProfile(user_id="other", interests=set(), age=99)
@@ -253,7 +255,7 @@ def test_simulated_outcome_depends_on_user_id_not_only_features() -> None:
     realistic ceiling above the rules baseline.
     """
     fn = make_simulated_outcome_fn(seed=1, noise_level=0.0)
-    source = UserProfile(user_id="src", interests={"a", "b"}, age=30, location="austin")
+    source = UserProfile(user_id="src", interests={"a", "b"}, age=30, hometown="austin")
     labels = {
         fn(
             source,
@@ -261,7 +263,7 @@ def test_simulated_outcome_depends_on_user_id_not_only_features() -> None:
                 user_id=f"cand_{i}",
                 interests={"a", "b"},
                 age=30,
-                location="austin",
+                hometown="austin",
             ),
         )
         for i in range(50)
@@ -273,7 +275,7 @@ def test_simulated_outcome_depends_on_user_id_not_only_features() -> None:
 
 def test_simulated_outcome_produces_mix_of_labels() -> None:
     fn = make_simulated_outcome_fn(seed=3)
-    source = UserProfile(user_id="src", interests={"a", "b"}, age=30, location="austin")
+    source = UserProfile(user_id="src", interests={"a", "b"}, age=30, hometown="austin")
     labels = [
         fn(
             source,
@@ -281,7 +283,7 @@ def test_simulated_outcome_produces_mix_of_labels() -> None:
                 user_id=f"c_{i}",
                 interests={"a"} if i % 2 == 0 else {"x"},
                 age=30 + (i % 10),
-                location="austin" if i % 3 == 0 else "seattle",
+                hometown="austin" if i % 3 == 0 else "seattle",
             ),
         )
         for i in range(100)
@@ -311,3 +313,47 @@ def test_get_relevance_fn_unknown_name_raises() -> None:
 
     with pytest.raises(ValueError, match="Unknown relevance fn"):
         get_relevance_fn("not_a_real_one")
+
+
+# ---------- ablate_weights ----------
+
+
+def test_ablate_weights_returns_baseline_first_then_one_row_per_feature() -> None:
+    source = UserProfile(
+        user_id="src",
+        interests={"a", "b", "c"},
+        liked_topics={"x", "y"},
+        hometown="austin",
+        college="ut",
+        age=30,
+        mutual_friend_ids={"f1", "f2"},
+    )
+    candidates = [
+        UserProfile(
+            user_id=f"c{i}",
+            interests={"a"} if i % 2 == 0 else {"z"},
+            liked_topics={"x"} if i % 3 == 0 else {"q"},
+            hometown="austin" if i % 4 == 0 else "seattle",
+            college="ut" if i % 5 == 0 else "harvard",
+            age=30 + (i - 5),
+            mutual_friend_ids={"f1"} if i % 2 == 0 else set(),
+        )
+        for i in range(10)
+    ]
+    relevant = {"c0", "c2", "c4"}
+    queries = [(source, candidates, relevant)]
+
+    rows = ablate_weights(queries, k=5)
+
+    assert rows[0].feature == "<full>"
+    assert [r.feature for r in rows[1:]] == list(ABLATABLE_WEIGHT_FIELDS)
+    # Baseline deltas are zero by construction.
+    assert rows[0].delta_precision == 0.0
+    assert rows[0].delta_ndcg == 0.0
+
+
+def test_ablate_weights_rejects_unknown_field() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown ScoringWeights field"):
+        ablate_weights([], features=("not_a_real_weight",))

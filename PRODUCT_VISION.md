@@ -67,8 +67,13 @@ candidate to actually befriend, ranked in this priority order:
    friendships in the real world. Sourced from contacts + Instagram
    graph imports. This is why `mutual_friends` and the
    `friend_common_boost` lane dominate the score.
-2. **Shared background** — hometown, college, where you grew up. People
-   with shared origin context bond fast.
+2. **Shared background** — hometown and college. These are *peer-strength*
+   friendship cues and contribute independently: a candidate can light
+   up one without the other (two BU grads who grew up in different
+   cities, or two people who grew up in Boston but went to different
+   schools). In the engine they're separate fields (`UserProfile.hometown`,
+   `UserProfile.college`) with the same default weight (`hometown_match`
+   = `college_match` in `ScoringWeights`).
 3. **Hobbies and interests** — what you actually like to do.
 
 ### 3. Low-lift hangout invitations
@@ -91,7 +96,7 @@ different things:
 |---|---|---|
 | What it is | Where you are *right now* | Where you grew up |
 | Role in the system | **Hard pre-filter.** Profiles outside the radius are removed before the ranker ever sees them. | **Soft ranking signal.** Same hometown = friendship cue, gets a positive weight. |
-| Where it lives in code | Upstream of the matching engine (DB / geo-index query) | A feature inside `compute_match_score`, currently stored in `UserProfile.location` |
+| Where it lives in code | Upstream of the matching engine (DB / geo-index query) | A feature inside `compute_match_score`, stored in `UserProfile.hometown` (with `UserProfile.college` as its peer signal) |
 
 **The matching engine never sees GPS coordinates and never computes
 Haversine distance.** By the time `rank_candidates` runs, the radius
@@ -114,7 +119,10 @@ A summary of the design choices for someone reading the code cold:
   finding that friend-of-friend is the #1 path to new friendships.
 - **Hometown / shared background ranks above generic interests.**
   Shared origin context is a stronger friendship predictor than
-  overlapping hobby lists, and the weights reflect that.
+  overlapping hobby lists, and the weights reflect that. Hometown and
+  college are modelled as two independent peer-strength signals — same
+  college with different hometown (or vice versa) is still a strong
+  conversation-starter, so they each add to the score on their own.
 - **Interests and liked topics use Jaccard overlap, not just counts.**
   Two people who both list 30 hobbies and share 3 are less similar than
   two people who list 5 hobbies and share 3 — Jaccard handles that

@@ -30,9 +30,11 @@ import random
 import struct
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import fields as dataclass_fields
+from dataclasses import replace as dataclass_replace
 
 from .embeddings import Vector
-from .models import UserProfile
+from .models import ScoringWeights, UserProfile
 from .scoring import rank_candidates
 
 # A ranker is anything that takes (source, candidates) and returns the
@@ -162,8 +164,13 @@ def synthesize_relevance(source: UserProfile, candidate: UserProfile) -> bool:
       1. ≥2 shared interests
       2. ≥2 shared liked_topics
       3. shared hometown
-      4. age gap ≤ 5 years
-      5. ≥1 mutual friend
+      4. shared college
+      5. age gap ≤ 5 years
+      6. ≥1 mutual friend
+
+    Hometown and college are listed as independent signals because they
+    are independent friendship cues — you can match on one without the
+    other.
 
     This is a *thresholded multi-signal* rule, structurally different from
     the ranker's continuous weighted score, so the resulting labels still
@@ -178,7 +185,8 @@ def synthesize_relevance(source: UserProfile, candidate: UserProfile) -> bool:
     signals = [
         len(source.interests & candidate.interests) >= 2,
         len(source.liked_topics & candidate.liked_topics) >= 2,
-        bool(source.location and source.location == candidate.location),
+        bool(source.hometown and source.hometown == candidate.hometown),
+        bool(source.college and source.college == candidate.college),
         age_close,
         bool(source.mutual_friend_ids & candidate.mutual_friend_ids),
     ]
@@ -241,7 +249,8 @@ def _continuous_observable_affinity(source: UserProfile, candidate: UserProfile)
     """
     interest_overlap = len(source.interests & candidate.interests)
     liked_overlap = len(source.liked_topics & candidate.liked_topics)
-    same_hometown = 1.0 if source.location and source.location == candidate.location else 0.0
+    same_hometown = 1.0 if source.hometown and source.hometown == candidate.hometown else 0.0
+    same_college = 1.0 if source.college and source.college == candidate.college else 0.0
     if source.age is not None and candidate.age is not None:
         age_closeness = max(0.0, 1.0 - abs(source.age - candidate.age) / 15.0)
     else:
@@ -249,10 +258,14 @@ def _continuous_observable_affinity(source: UserProfile, candidate: UserProfile)
     mutual_friends = len(source.mutual_friend_ids & candidate.mutual_friend_ids)
 
     # Weighted sum with diminishing returns on count-style signals.
+    # Hometown and college are peer-strength friendship cues, weighted the
+    # same — they're independent so a candidate can light up one without
+    # the other.
     raw = (
-        0.30 * min(interest_overlap / 4.0, 1.0)
-        + 0.25 * min(liked_overlap / 4.0, 1.0)
+        0.20 * min(interest_overlap / 4.0, 1.0)
+        + 0.15 * min(liked_overlap / 4.0, 1.0)
         + 0.20 * same_hometown
+        + 0.20 * same_college
         + 0.15 * age_closeness
         + 0.10 * min(mutual_friends / 3.0, 1.0)
     )
@@ -432,5 +445,122 @@ def make_random_ranker(seed: int = 0) -> Ranker:
         shuffled = list(candidates)
         rng.shuffle(shuffled)
         return [profile.user_id for profile in shuffled]
+
+    return ranker
+
+
+# ---------- per-feature ablation ----------
+#
+# The ablation harness answers the question "which signal is actually
+# carrying the ranker?" by zeroing each weight in turn and re-evaluating.
+# The metric drop vs. the full-weights baseline is the contribution of
+# that signal. Useful both as a sanity check on the weights and as a
+# resume-worthy artifact ("we measured every feature's marginal value").
+
+
+# Weight field names that are safe to zero individually. `friend_common_boost`
+# is excluded because it lives in a separate boost lane, not the base score —
+# its ablation story is "the two-lane sort still runs but the boost is 0,"
+# which is a different question and worth a dedicated experiment.
+ABLATABLE_WEIGHT_FIELDS: tuple[str, ...] = (
+    "interest_overlap",
+    "liked_topic_overlap",
+    "mutual_friends",
+    "hometown_match",
+    "college_match",
+    "age_compatibility",
+    "semantic_similarity",
+)
+
+
+@dataclass(frozen=True)
+class AblationRow:
+    """One row of an ablation table: which feature was zeroed and what happened."""
+
+    feature: str  # weight field that was set to 0.0 (or "<full>" for the baseline)
+    result: EvaluationResult
+    # Drop vs. the full-weights baseline (positive = the ranker got worse).
+    delta_precision: float
+    delta_recall: float
+    delta_map: float
+    delta_ndcg: float
+
+
+def ablate_weights(
+    queries: Iterable[Query],
+    weights: ScoringWeights | None = None,
+    profile_embeddings: Mapping[str, Vector] | None = None,
+    k: int = 10,
+    features: Sequence[str] | None = None,
+) -> list[AblationRow]:
+    """Evaluate the rules ranker with each weight zeroed in turn.
+
+    Returns a list of `AblationRow` starting with the full-weights baseline
+    (`feature="<full>"`) followed by one row per ablated weight. Each
+    `delta_*` is `baseline - ablated`, so positive means "removing this
+    feature made the ranker worse" (the usual case).
+
+    Why this isn't a permutation test: zeroing a weight is faster than
+    permuting feature values across queries and answers the simpler
+    product question "what happens if we just turn this signal off?"
+    The two analyses are complementary.
+    """
+    base_weights = weights or ScoringWeights()
+    targets = tuple(features) if features is not None else ABLATABLE_WEIGHT_FIELDS
+
+    # Validate names against the live dataclass so a typo fails loud.
+    known = {f.name for f in dataclass_fields(base_weights)}
+    for name in targets:
+        if name not in known:
+            raise ValueError(
+                f"Unknown ScoringWeights field {name!r}. "
+                f"Known fields: {sorted(known)}"
+            )
+
+    queries = list(queries)
+
+    baseline_ranker = _weighted_rules_ranker(base_weights, profile_embeddings)
+    baseline = evaluate_ranker(baseline_ranker, queries, k=k)
+
+    rows: list[AblationRow] = [
+        AblationRow(
+            feature="<full>",
+            result=baseline,
+            delta_precision=0.0,
+            delta_recall=0.0,
+            delta_map=0.0,
+            delta_ndcg=0.0,
+        )
+    ]
+
+    for name in targets:
+        ablated = dataclass_replace(base_weights, **{name: 0.0})
+        ablated_ranker = _weighted_rules_ranker(ablated, profile_embeddings)
+        result = evaluate_ranker(ablated_ranker, queries, k=k)
+        rows.append(
+            AblationRow(
+                feature=name,
+                result=result,
+                delta_precision=baseline.precision - result.precision,
+                delta_recall=baseline.recall - result.recall,
+                delta_map=baseline.map - result.map,
+                delta_ndcg=baseline.ndcg - result.ndcg,
+            )
+        )
+
+    return rows
+
+
+def _weighted_rules_ranker(
+    weights: ScoringWeights,
+    profile_embeddings: Mapping[str, Vector] | None,
+) -> Ranker:
+    """Internal: rules ranker bound to a specific ScoringWeights."""
+
+    def ranker(source: UserProfile, candidates: list[UserProfile]) -> list[str]:
+        ranked = rank_candidates(
+            source, candidates, weights=weights, profile_embeddings=profile_embeddings
+        )
+        return [profile.user_id for profile, _ in ranked]
 
     return ranker
