@@ -3,6 +3,11 @@
 This file is loaded automatically by Claude Code at the start of every session.
 It captures non-obvious product context that must NOT be re-derived or guessed.
 
+> **Before touching anything, read `PRODUCT_VISION.md`** in the repo root —
+> that file describes what the *app* is (a location-scoped "make new
+> friends in your city" social network) and grounds every design choice
+> below. The rest of this file assumes you've read it.
+
 ---
 
 ## Product premise (read this before changing anything in `scoring.py`)
