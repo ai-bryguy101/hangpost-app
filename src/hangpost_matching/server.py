@@ -50,7 +50,8 @@ class UserProfileIn(BaseModel):
     user_id: str
     interests: list[str] = Field(default_factory=list)
     liked_topics: list[str] = Field(default_factory=list)
-    location: str | None = None
+    hometown: str | None = None
+    college: str | None = None
     age: int | None = None
     mutual_friend_ids: list[str] = Field(default_factory=list)
 
@@ -59,7 +60,8 @@ class UserProfileIn(BaseModel):
             user_id=self.user_id,
             interests=set(self.interests),
             liked_topics=set(self.liked_topics),
-            location=self.location,
+            hometown=self.hometown,
+            college=self.college,
             age=self.age,
             mutual_friend_ids=set(self.mutual_friend_ids),
         )
@@ -76,10 +78,12 @@ class RankedItem(BaseModel):
     user_id: str
     total_score: float
     has_mutual_friends: bool
+    has_shared_background: bool
     interest_overlap: float
     liked_topic_overlap: float
     mutual_friends: float
-    location_match: float
+    hometown_match: float
+    college_match: float
     age_compatibility: float
     semantic_similarity: float
 
@@ -175,10 +179,12 @@ def _breakdown_to_item(user_id: str, breakdown: object) -> RankedItem:
         user_id=user_id,
         total_score=getattr(breakdown, "total_score"),  # noqa: B009
         has_mutual_friends=getattr(breakdown, "has_mutual_friends"),  # noqa: B009
+        has_shared_background=getattr(breakdown, "has_shared_background"),  # noqa: B009
         interest_overlap=getattr(breakdown, "interest_overlap"),  # noqa: B009
         liked_topic_overlap=getattr(breakdown, "liked_topic_overlap"),  # noqa: B009
         mutual_friends=getattr(breakdown, "mutual_friends"),  # noqa: B009
-        location_match=getattr(breakdown, "location_match"),  # noqa: B009
+        hometown_match=getattr(breakdown, "hometown_match"),  # noqa: B009
+        college_match=getattr(breakdown, "college_match"),  # noqa: B009
         age_compatibility=getattr(breakdown, "age_compatibility"),  # noqa: B009
         semantic_similarity=getattr(breakdown, "semantic_similarity"),  # noqa: B009
     )

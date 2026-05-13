@@ -50,9 +50,12 @@ Subgroups likely to influence model behaviour:
 - **Age.** The age-compatibility component is a 10%-per-year ladder that
   zeroes at gaps ≥10 years. Older users in mostly-younger geographies
   will see fewer in-lane candidates.
-- **Hometown rarity.** The `location_match` signal rewards exact hometown
-  matches. Users from common hometowns ("Boston", "New York") will see
-  this signal fire more often than users from rare hometowns.
+- **Hometown / college rarity.** The `hometown_match` and `college_match`
+  signals reward exact-string matches. Users from common hometowns
+  ("Boston", "New York") or large universities will see these signals
+  fire more often than users from rare hometowns or small / international
+  schools. The two signals are independent, so a candidate can light up
+  one without the other.
 - **Mutual-friend density.** New users with no graph edges can never
   enter the social-boost lane and will rank below anyone with even one
   mutual friend, regardless of compatibility.
@@ -76,13 +79,24 @@ Macro-averaged across queries (each query weighted equally).
 
 - **Source.** A 1000-profile synthetic CSV at `data/test_profiles.csv`
   with hometown, age, hobbies, interests, mutual-friend counts, etc.
-- **Labels.** Synthetic — `synthesize_relevance` flags a candidate as
-  relevant when ≥3 of 5 multi-signal thresholds fire (≥2 shared
-  interests, ≥2 shared liked topics, same hometown, age gap ≤ 5,
-  ≥1 mutual friend). The thresholding rule is *structurally different*
-  from the ranker's continuous weighted score, so the metrics still
-  measure ranking quality — but they are an admitted stand-in until
-  real outcome data exists.
+- **Labels.** Three interchangeable generators (`--relevance` on both
+  `scripts/train.py` and `scripts/evaluate.py`):
+  - `rule_based` — `synthesize_relevance`: relevant when ≥3 of 5
+    multi-signal thresholds fire. Shares features with the ranker, so
+    the rules baseline scores near 1.0 against this label set; treat as
+    a *consistency* check, not a quality claim.
+  - `noisy` — `rule_based` with deterministic per-pair Bernoulli flips
+    (default 15%). Useful for label-noise robustness ablations.
+  - `simulated` — `make_simulated_outcome_fn`: outcomes are drawn from a
+    logistic mixture of (a) continuous observable affinity over the
+    rule features and (b) cosine similarity between hidden per-user
+    "personality" vectors derived from `user_id` only (the ranker
+    cannot see them), with Bernoulli noise on top (default 10%). This
+    is the closest stand-in for real interaction data — neither the
+    rules baseline nor the learned ranker can saturate against it
+    because part of the signal is unobservable.
+  All three are pure functions of `(source, candidate)` once a seed is
+  fixed, keeping train/test splits reproducible.
 - **Splitting.** Train/test split by **source profile** (no leakage).
   Default 70/30 in `scripts/train.py`.
 
@@ -95,14 +109,23 @@ as upper bounds on production performance.**
 
 ## Quantitative analyses
 
-Run `scripts/train.py --with-embeddings` to produce the
-random / rules / rules+embeddings / learned comparison on the held-out
-split. Numbers should be pasted into the README each time the harness
-or features change.
+Run `scripts/train.py --with-embeddings --relevance simulated` to
+produce the random / rules / rules+embeddings / learned comparison on
+the held-out split under realistic-ceiling labels. Numbers should be
+pasted into the README each time the harness or features change.
 
 The repo's CI does not run this comparison (it would require the `[ml]`
 extra and a model download); reproduction is the responsibility of
 whoever updates the README.
+
+## Experiment tracking
+
+Pass `--mlflow` to `scripts/train.py` to log every run to MLflow (params,
+per-ranker metrics, and the saved joblib model as an artifact). MLflow
+is in the `[ml]` extra and lazily imported, so CI without `--mlflow`
+is unaffected. This makes it possible to diff hyperparameters,
+relevance generators, and feature sets across runs without re-reading
+the terminal — a baseline practice for ML/AI engineering work.
 
 ## Ethical considerations
 

@@ -26,6 +26,7 @@ def load_profiles_from_csv(path: Path) -> list[UserProfile]:
     - friends_in_common (an integer count)
     - age
     - hometown
+    - college
     - hobbies_activities_sports_games_skills_certifications
     - interests_likes
 
@@ -47,7 +48,8 @@ def load_profiles_from_csv(path: Path) -> list[UserProfile]:
                         row["hobbies_activities_sports_games_skills_certifications"]
                     ),
                     liked_topics=_tokenize(row["interests_likes"]),
-                    location=row["hometown"].strip().lower() or None,
+                    hometown=row["hometown"].strip().lower() or None,
+                    college=row.get("college", "").strip().lower() or None,
                     age=int(row["age"]),
                     mutual_friend_ids=mutual_friend_ids,
                 )

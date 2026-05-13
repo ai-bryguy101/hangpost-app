@@ -38,9 +38,28 @@ def _bounded_ratio(value: float, max_value: float) -> float:
     return min(max(value / max_value, 0.0), 1.0)
 
 
-def _location_score(source: UserProfile, candidate: UserProfile) -> float:
-    """Simple exact-match location score."""
-    if source.location and candidate.location and source.location == candidate.location:
+def _hometown_score(source: UserProfile, candidate: UserProfile) -> float:
+    """Simple exact-match hometown score.
+
+    Hometown is the place a user grew up — a soft matching signal. This is
+    NOT the radius pre-filter (the radius is applied upstream of the
+    ranker; see PRODUCT_VISION.md).
+    """
+    if source.hometown and candidate.hometown and source.hometown == candidate.hometown:
+        return 1.0
+    return 0.0
+
+
+def _college_score(source: UserProfile, candidate: UserProfile) -> float:
+    """Simple exact-match college score.
+
+    Same-college is a peer-strength friendship cue to same-hometown — two
+    users who went to the same university have a strong conversation
+    starter even when they grew up in different cities. Hometown and
+    college contribute independently, so a user can match on one, the
+    other, or both.
+    """
+    if source.college and candidate.college and source.college == candidate.college:
         return 1.0
     return 0.0
 
@@ -117,20 +136,26 @@ def compute_match_score(
     mutual_friends = _bounded_ratio(mutual_friend_count, 20)
     has_mutual_friends = mutual_friend_count > 0
 
-    location_match = _location_score(source, candidate)
+    hometown_match = _hometown_score(source, candidate)
+    college_match = _college_score(source, candidate)
+    # "Shared background" trigger for the second sort lane: same hometown
+    # OR same college is enough. The two cues are independent — see
+    # PRODUCT_VISION.md — so a candidate that matches on either qualifies.
+    has_shared_background = hometown_match > 0.0 or college_match > 0.0
     age_compatibility = _age_compatibility_score(source, candidate)
     semantic_similarity = _semantic_similarity_score(source, candidate, profile_embeddings)
 
     # 2) Weighted base score (normal compatibility lane).
     # The cap on `total_score` was removed when `semantic_similarity` was
-    # introduced. With six weighted components plus the social boost, capping
+    # introduced. With seven weighted components plus the social boost, capping
     # at 1.0 silently compressed the top of the distribution and hid signal.
     # The ranker only cares about ordering, so absolute magnitude is fine.
     base_score = (
         active_weights.interest_overlap * interest_overlap
         + active_weights.liked_topic_overlap * liked_topic_overlap
         + active_weights.mutual_friends * mutual_friends
-        + active_weights.location_match * location_match
+        + active_weights.hometown_match * hometown_match
+        + active_weights.college_match * college_match
         + active_weights.age_compatibility * age_compatibility
         + active_weights.semantic_similarity * semantic_similarity
     )
@@ -145,11 +170,13 @@ def compute_match_score(
     return MatchBreakdown(
         total_score=round(total_score, 6),
         has_mutual_friends=has_mutual_friends,
+        has_shared_background=has_shared_background,
         social_boost=round(social_boost, 6),
         interest_overlap=round(interest_overlap, 6),
         liked_topic_overlap=round(liked_topic_overlap, 6),
         mutual_friends=round(mutual_friends, 6),
-        location_match=round(location_match, 6),
+        hometown_match=round(hometown_match, 6),
+        college_match=round(college_match, 6),
         age_compatibility=round(age_compatibility, 6),
         semantic_similarity=round(semantic_similarity, 6),
     )
@@ -164,12 +191,21 @@ def rank_candidates(
     """Rank candidates for one source profile.
 
     Sort strategy (descending):
-    1) `has_mutual_friends` (True before False)
-    2) `total_score`
+    1) `has_mutual_friends`         (True before False) — tier 1
+    2) `has_shared_background`      (True before False) — tier 2
+    3) `total_score`                (weighted compatibility)
 
-    This creates a clear two-lane policy:
-    - socially-connected candidates first
-    - then non-connected candidates by compatibility
+    This creates a clear three-lane policy that matches the product
+    tiering described in PRODUCT_VISION.md:
+
+    - Lane A — socially-connected candidates (≥1 mutual friend) always
+      rank first, regardless of any other signal.
+    - Lane B — no mutual friends, but same hometown OR same college.
+      Always ranks above Lane C even when Lane C has higher hobby /
+      age / semantic compatibility.
+    - Lane C — neither tier 1 nor tier 2. Ordered by the weighted
+      `total_score` so age, hobbies, and semantic similarity still
+      decide who's surfaced first.
     """
     scored = [
         (candidate, compute_match_score(source, candidate, weights, profile_embeddings))
@@ -177,6 +213,10 @@ def rank_candidates(
     ]
     return sorted(
         scored,
-        key=lambda item: (item[1].has_mutual_friends, item[1].total_score),
+        key=lambda item: (
+            item[1].has_mutual_friends,
+            item[1].has_shared_background,
+            item[1].total_score,
+        ),
         reverse=True,
     )

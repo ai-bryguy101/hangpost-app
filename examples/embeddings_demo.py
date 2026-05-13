@@ -38,7 +38,7 @@ def main() -> None:
         user_id="u0",
         interests={"hiking", "coding", "trail running", "espresso"},
         liked_topics={"tech", "travel", "mountains"},
-        location="denver",
+        hometown="denver",
         age=28,
     )
 
@@ -47,21 +47,21 @@ def main() -> None:
             user_id="u1",
             interests={"backend dev", "trail running", "coffee"},
             liked_topics={"tech", "travel"},
-            location="denver",
+            hometown="denver",
             age=29,
         ),
         UserProfile(
             user_id="u2",
             interests={"poker", "casinos", "nightlife"},
             liked_topics={"vegas", "gambling"},
-            location="denver",
+            hometown="denver",
             age=28,
         ),
         UserProfile(
             user_id="u3",
             interests={"mountain biking", "climbing", "alpinism", "coffee"},
             liked_topics={"mountains", "outdoors"},
-            location="denver",
+            hometown="denver",
             age=27,
         ),
     ]

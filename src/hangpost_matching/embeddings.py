@@ -72,8 +72,10 @@ def profile_to_text(profile: UserProfile) -> str:
     parts: list[str] = []
     if profile.age is not None:
         parts.append(f"{profile.age} years old")
-    if profile.location:
-        parts.append(f"from {profile.location}")
+    if profile.hometown:
+        parts.append(f"from {profile.hometown}")
+    if profile.college:
+        parts.append(f"studied at {profile.college}")
     if profile.interests:
         parts.append(f"enjoys {', '.join(sorted(profile.interests))}")
     if profile.liked_topics:

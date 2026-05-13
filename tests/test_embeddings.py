@@ -63,7 +63,7 @@ def test_profile_to_text_uses_structured_fields() -> None:
         user_id="u",
         interests={"hiking", "coding"},
         liked_topics={"tech", "travel"},
-        location="austin",
+        hometown="austin",
         age=30,
     )
 
@@ -81,14 +81,14 @@ def test_profile_to_text_is_deterministic() -> None:
         user_id="a",
         interests={"chess", "yoga", "coding"},
         liked_topics={"music", "art"},
-        location="boston",
+        hometown="boston",
         age=25,
     )
     profile_b = UserProfile(
         user_id="b",
         interests={"yoga", "coding", "chess"},  # different insertion order
         liked_topics={"art", "music"},
-        location="boston",
+        hometown="boston",
         age=25,
     )
 
@@ -160,21 +160,21 @@ def test_semantic_similarity_breaks_ties_in_ranking() -> None:
         user_id="source",
         interests={"hiking"},
         liked_topics={"music"},
-        location="austin",
+        hometown="austin",
         age=30,
     )
     similar_profile = UserProfile(
         user_id="similar",
         interests={"hiking"},
         liked_topics={"music"},
-        location="austin",
+        hometown="austin",
         age=30,
     )
     different_profile = UserProfile(
         user_id="different",
         interests={"hiking"},
         liked_topics={"music"},
-        location="austin",
+        hometown="austin",
         age=30,
     )
     embeddings = {

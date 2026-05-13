@@ -27,8 +27,8 @@ representative sample of any real population.
 | `name` | string | Display name (synthetic) | No (only for `user_id` synthesis in `data.py`) |
 | `friends_in_common` | int | Count of synthetic mutual friends | Yes — converted to `mutual_friend_ids` set |
 | `age` | int | Profile age in years | Yes — `age_compatibility` |
-| `college` | string | College attended | No (reserved for future) |
-| `hometown` | string | Hometown city | Yes — `location_match` (treated as hometown, not current location) |
+| `college` | string | College attended | Yes — `college_match` (peer-strength signal to hometown) |
+| `hometown` | string | Hometown city | Yes — `hometown_match` (treated as hometown, not current location) |
 | `degree` | string | Academic degree | No (reserved) |
 | `job` | string | Job title | No (reserved) |
 | `homestate` | string | Home US state | No (reserved) |

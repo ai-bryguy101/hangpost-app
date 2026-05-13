@@ -2,7 +2,7 @@
 
 This script:
   1. Loads the seed CSV.
-  2. Generates synthetic relevance labels via `synthesize_relevance`.
+  2. Builds relevance labels via the chosen `--relevance` generator.
   3. Splits queries into train/test by *source* (no leakage).
   4. Optionally embeds every profile with sentence-transformers so the
      learned ranker has access to the semantic similarity feature.
@@ -10,6 +10,8 @@ This script:
   6. Evaluates random / rules_only / [rules+embeddings] / learned on the
      held-out test queries and prints a comparison.
   7. Saves the trained model + embedding cache to disk.
+  8. (Optional) Logs every parameter, metric, and the saved model to
+     MLflow for reproducible experiment tracking.
 
 Requires the [ml] extra:
     pip install -e ".[ml]"
@@ -17,14 +19,18 @@ Requires the [ml] extra:
 Run:
     python scripts/train.py
     python scripts/train.py --with-embeddings --queries 200
+    python scripts/train.py --relevance simulated --mlflow
     python scripts/train.py --with-embeddings --out models/learned.joblib
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = REPO_ROOT / "src"
@@ -32,12 +38,14 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from hangpost_matching import (  # noqa: E402
+    RELEVANCE_GENERATORS,
     EvaluationResult,
     LearnedRanker,
     Query,
     Ranker,
     build_queries,
     evaluate_ranker,
+    get_relevance_fn,
     load_profiles_from_csv,
     make_random_ranker,
     make_rules_ranker,
@@ -55,8 +63,74 @@ def _print_row(name: str, result: EvaluationResult) -> None:
     )
 
 
-def _evaluate(name: str, ranker: Ranker, queries: list[Query], k: int) -> None:
-    _print_row(name, evaluate_ranker(ranker, queries, k=k))
+def _evaluate_and_log(
+    name: str,
+    ranker: Ranker,
+    queries: list[Query],
+    k: int,
+    tracker: _Tracker,
+) -> EvaluationResult:
+    result = evaluate_ranker(ranker, queries, k=k)
+    _print_row(name, result)
+    tracker.log_metrics(name, result)
+    return result
+
+
+class _Tracker:
+    """Thin wrapper that logs to MLflow when enabled, no-ops otherwise.
+
+    Keeping the conditional in one class means the rest of `main` stays
+    flat and readable. The actual `mlflow` import is lazy so the [dev]
+    extra never needs it.
+    """
+
+    def __init__(self, enabled: bool, experiment: str | None = None) -> None:
+        self.enabled = enabled
+        self._mlflow: Any = None
+        if not enabled:
+            return
+        try:
+            import mlflow
+        except ImportError as exc:
+            raise ImportError(
+                'mlflow is required when --mlflow is set. Install with: pip install -e ".[ml]"'
+            ) from exc
+        self._mlflow = mlflow
+        if experiment:
+            mlflow.set_experiment(experiment)
+
+    @contextlib.contextmanager
+    def run(self, run_name: str | None = None) -> Iterator[None]:
+        if not self.enabled:
+            yield
+            return
+        with self._mlflow.start_run(run_name=run_name):
+            yield
+
+    def log_params(self, params: dict[str, Any]) -> None:
+        if not self.enabled:
+            return
+        self._mlflow.log_params(params)
+
+    def log_metrics(self, ranker_name: str, result: EvaluationResult) -> None:
+        if not self.enabled:
+            return
+        prefix = (
+            ranker_name.replace(" ", "_").replace("+", "_plus_").replace("(", "").replace(")", "")
+        )
+        self._mlflow.log_metrics(
+            {
+                f"{prefix}/precision@{result.k}": result.precision,
+                f"{prefix}/recall@{result.k}": result.recall,
+                f"{prefix}/ndcg@{result.k}": result.ndcg,
+                f"{prefix}/map@{result.k}": result.map,
+            }
+        )
+
+    def log_artifact(self, path: Path) -> None:
+        if not self.enabled:
+            return
+        self._mlflow.log_artifact(str(path))
 
 
 def main() -> None:
@@ -82,56 +156,129 @@ def main() -> None:
         help="Embed profiles with sentence-transformers before training",
     )
     parser.add_argument(
+        "--relevance",
+        choices=sorted(RELEVANCE_GENERATORS),
+        default="rule_based",
+        help=(
+            "Which relevance label generator to use during training and "
+            "evaluation. 'simulated' produces a more realistic ceiling by "
+            "introducing hidden confounders and noise."
+        ),
+    )
+    parser.add_argument(
         "--out",
         type=Path,
         default=Path("models/learned_ranker.joblib"),
         help="Where to save the trained LearnedRanker",
     )
+    parser.add_argument(
+        "--mlflow",
+        action="store_true",
+        help="Log parameters, metrics, and model artifact to MLflow.",
+    )
+    parser.add_argument(
+        "--mlflow-experiment",
+        default="hangpost-matching",
+        help="MLflow experiment name (only used when --mlflow is set).",
+    )
+    parser.add_argument(
+        "--n-estimators",
+        type=int,
+        default=200,
+        help="LightGBM n_estimators (boosting rounds).",
+    )
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=0.05,
+        help="LightGBM learning rate.",
+    )
+    parser.add_argument(
+        "--num-leaves",
+        type=int,
+        default=31,
+        help="LightGBM num_leaves.",
+    )
     args = parser.parse_args()
 
-    profiles = load_profiles_from_csv(Path(args.csv))
-    print(f"Loaded {len(profiles)} profiles from {args.csv}")
+    tracker = _Tracker(enabled=args.mlflow, experiment=args.mlflow_experiment)
 
-    queries = [q for q in build_queries(profiles, args.queries, args.seed) if q[2]]
-    train_queries, test_queries = split_queries(queries, args.train_fraction, args.seed)
-    print(
-        f"{len(train_queries)} train queries / {len(test_queries)} test queries "
-        f"(both filtered to ≥1 relevant)"
-    )
+    with tracker.run(run_name=f"{args.relevance}-{'emb' if args.with_embeddings else 'no_emb'}"):
+        profiles = load_profiles_from_csv(Path(args.csv))
+        print(f"Loaded {len(profiles)} profiles from {args.csv}")
 
-    embeddings = None
-    if args.with_embeddings:
-        from hangpost_matching import SentenceTransformerEmbedder, embed_profiles
+        relevance_fn = get_relevance_fn(args.relevance, args.seed)
+        print(f"Relevance generator: {args.relevance}")
 
-        print("\nLoading sentence-transformer model and embedding all profiles...")
-        embedder = SentenceTransformerEmbedder()
-        embeddings = embed_profiles(profiles, embedder)
-        print(f"Embedded {len(embeddings)} profiles.")
-
-    print("\nTraining LightGBM LGBMRanker...")
-    learned = LearnedRanker(profile_embeddings=embeddings)
-    learned.fit(train_queries)
-    print("Done.")
-
-    print(f"\nHeld-out evaluation ({len(test_queries)} queries, k={args.k}):")
-    print(
-        f"\n{'System':<22} {'P@' + str(args.k):>8} {'R@' + str(args.k):>8} "
-        f"{'NDCG@' + str(args.k):>9} {'MAP@' + str(args.k):>9}"
-    )
-    print("-" * 62)
-    _evaluate("random", make_random_ranker(args.seed), test_queries, args.k)
-    _evaluate("rules_only", make_rules_ranker(), test_queries, args.k)
-    if embeddings is not None:
-        _evaluate(
-            "rules+embeddings",
-            make_rules_ranker(profile_embeddings=embeddings),
-            test_queries,
-            args.k,
+        queries = [
+            q
+            for q in build_queries(profiles, args.queries, args.seed, relevance_fn=relevance_fn)
+            if q[2]
+        ]
+        train_queries, test_queries = split_queries(queries, args.train_fraction, args.seed)
+        print(
+            f"{len(train_queries)} train queries / {len(test_queries)} test queries "
+            f"(both filtered to ≥1 relevant)"
         )
-    _evaluate("learned (Phase 3)", learned.as_ranker(), test_queries, args.k)
 
-    learned.save(args.out)
-    print(f"\nSaved learned ranker to {args.out}")
+        tracker.log_params(
+            {
+                "csv": args.csv,
+                "queries": args.queries,
+                "train_fraction": args.train_fraction,
+                "k": args.k,
+                "seed": args.seed,
+                "with_embeddings": args.with_embeddings,
+                "relevance": args.relevance,
+                "n_estimators": args.n_estimators,
+                "learning_rate": args.learning_rate,
+                "num_leaves": args.num_leaves,
+                "n_profiles": len(profiles),
+                "n_train_queries": len(train_queries),
+                "n_test_queries": len(test_queries),
+            }
+        )
+
+        embeddings = None
+        if args.with_embeddings:
+            from hangpost_matching import SentenceTransformerEmbedder, embed_profiles
+
+            print("\nLoading sentence-transformer model and embedding all profiles...")
+            embedder = SentenceTransformerEmbedder()
+            embeddings = embed_profiles(profiles, embedder)
+            print(f"Embedded {len(embeddings)} profiles.")
+
+        print("\nTraining LightGBM LGBMRanker...")
+        learned = LearnedRanker(profile_embeddings=embeddings)
+        learned.fit(
+            train_queries,
+            n_estimators=args.n_estimators,
+            learning_rate=args.learning_rate,
+            num_leaves=args.num_leaves,
+        )
+        print("Done.")
+
+        print(f"\nHeld-out evaluation ({len(test_queries)} queries, k={args.k}):")
+        print(
+            f"\n{'System':<22} {'P@' + str(args.k):>8} {'R@' + str(args.k):>8} "
+            f"{'NDCG@' + str(args.k):>9} {'MAP@' + str(args.k):>9}"
+        )
+        print("-" * 62)
+        _evaluate_and_log("random", make_random_ranker(args.seed), test_queries, args.k, tracker)
+        _evaluate_and_log("rules_only", make_rules_ranker(), test_queries, args.k, tracker)
+        if embeddings is not None:
+            _evaluate_and_log(
+                "rules+embeddings",
+                make_rules_ranker(profile_embeddings=embeddings),
+                test_queries,
+                args.k,
+                tracker,
+            )
+        _evaluate_and_log("learned", learned.as_ranker(), test_queries, args.k, tracker)
+
+        learned.save(args.out)
+        print(f"\nSaved learned ranker to {args.out}")
+        tracker.log_artifact(args.out)
 
 
 if __name__ == "__main__":
