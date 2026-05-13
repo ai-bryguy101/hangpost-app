@@ -78,6 +78,7 @@ class RankedItem(BaseModel):
     user_id: str
     total_score: float
     has_mutual_friends: bool
+    has_shared_background: bool
     interest_overlap: float
     liked_topic_overlap: float
     mutual_friends: float
@@ -178,6 +179,7 @@ def _breakdown_to_item(user_id: str, breakdown: object) -> RankedItem:
         user_id=user_id,
         total_score=getattr(breakdown, "total_score"),  # noqa: B009
         has_mutual_friends=getattr(breakdown, "has_mutual_friends"),  # noqa: B009
+        has_shared_background=getattr(breakdown, "has_shared_background"),  # noqa: B009
         interest_overlap=getattr(breakdown, "interest_overlap"),  # noqa: B009
         liked_topic_overlap=getattr(breakdown, "liked_topic_overlap"),  # noqa: B009
         mutual_friends=getattr(breakdown, "mutual_friends"),  # noqa: B009

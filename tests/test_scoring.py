@@ -117,6 +117,95 @@ def test_mutual_friends_get_social_boost_and_priority() -> None:
     assert ranked[0][0].user_id == "with_mutual"
 
 
+def test_shared_background_lane_beats_tier_3_regardless_of_score() -> None:
+    """Tier-2 candidate (shared hometown OR college) must outrank tier-3 candidate
+    with much higher hobby/age compatibility — the lane is a hard invariant.
+    """
+    source = UserProfile(
+        user_id="source",
+        interests={"hiking", "coding", "cooking", "yoga"},
+        liked_topics={"tech", "travel", "music"},
+        hometown="boston",
+        college="bu",
+        age=30,
+        mutual_friend_ids=set(),
+    )
+
+    # Tier 2: no mutuals, same hometown only, but completely mismatched on
+    # hobbies and age.
+    shared_background = UserProfile(
+        user_id="shared_bg",
+        interests={"opera"},
+        liked_topics={"taxidermy"},
+        hometown="boston",
+        college="ucla",  # different college on purpose
+        age=55,  # large age gap on purpose
+        mutual_friend_ids=set(),
+    )
+
+    # Tier 3: no mutuals, different hometown AND college, but perfect on
+    # every other signal.
+    perfect_tier3 = UserProfile(
+        user_id="perfect_tier3",
+        interests={"hiking", "coding", "cooking", "yoga"},
+        liked_topics={"tech", "travel", "music"},
+        hometown="seattle",
+        college="uw",
+        age=30,
+        mutual_friend_ids=set(),
+    )
+
+    ranked = rank_candidates(source, [perfect_tier3, shared_background])
+
+    assert ranked[0][0].user_id == "shared_bg"
+    assert ranked[0][1].has_shared_background is True
+    assert ranked[1][0].user_id == "perfect_tier3"
+    assert ranked[1][1].has_shared_background is False
+    # Sanity: tier-3 candidate has a strictly higher weighted score, the
+    # lane invariant is what's putting tier-2 on top.
+    assert ranked[1][1].total_score > ranked[0][1].total_score
+
+
+def test_mutual_friends_lane_beats_shared_background_lane() -> None:
+    """Tier 1 still wins over tier 2: a candidate with a mutual friend but
+    nothing else in common outranks a candidate with shared background and
+    high compatibility.
+    """
+    source = UserProfile(
+        user_id="source",
+        interests={"hiking"},
+        hometown="boston",
+        college="bu",
+        age=30,
+        mutual_friend_ids={"f1"},
+    )
+
+    tier1_only = UserProfile(
+        user_id="tier1",
+        interests={"opera"},
+        hometown="atlanta",
+        college="emory",
+        age=55,
+        mutual_friend_ids={"f1"},
+    )
+    tier2_high_score = UserProfile(
+        user_id="tier2",
+        interests={"hiking"},
+        hometown="boston",
+        college="bu",
+        age=30,
+        mutual_friend_ids=set(),
+    )
+
+    ranked = rank_candidates(source, [tier2_high_score, tier1_only])
+
+    assert ranked[0][0].user_id == "tier1"
+    assert ranked[0][1].has_mutual_friends is True
+    assert ranked[1][0].user_id == "tier2"
+    assert ranked[1][1].has_mutual_friends is False
+    assert ranked[1][1].has_shared_background is True
+
+
 def test_age_compatibility_uses_10_percent_step_down_per_year() -> None:
     source = UserProfile(user_id="source", age=30)
 

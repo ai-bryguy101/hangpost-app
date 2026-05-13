@@ -6,10 +6,11 @@ set, and the strongest one ships:
 
 1. **Phase 1 — Rules.** Deterministic weighted scoring (Jaccard interest/topic
    overlap, mutual-friend ratio, hometown match, college match,
-   age-compatibility ladder) plus a separate "social-boost" lane for
-   candidates with mutual friends. Hometown and college are
-   peer-strength friendship cues with equal default weights — a
-   candidate can match on one without the other.
+   age-compatibility ladder) sorted via a three-lane policy: mutual
+   friends → shared hometown/college → everyone else, with the weighted
+   `total_score` deciding order *within* each lane. Hometown and
+   college are peer-strength friendship cues with equal default
+   weights — a candidate can match on one without the other.
 2. **Phase 2 — Embeddings.** Adds `semantic_similarity` from
    `sentence-transformers/all-MiniLM-L6-v2`. The text that gets embedded is
    *auto-synthesized* from each user's structured fields by

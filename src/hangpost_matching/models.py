@@ -107,6 +107,13 @@ class MatchBreakdown:
     # Whether at least 1 mutual friend exists.
     has_mutual_friends: bool
 
+    # Whether the candidate shares hometown OR college with the source.
+    # Drives the second lane in `rank_candidates`'s three-lane sort: after
+    # mutual-friend candidates, candidates with shared background rank
+    # above candidates with neither, regardless of how well the latter
+    # score on hobbies / age / semantic similarity.
+    has_shared_background: bool
+
     # The extra social boost applied when `has_mutual_friends` is True.
     social_boost: float
 

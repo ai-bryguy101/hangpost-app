@@ -138,6 +138,10 @@ def compute_match_score(
 
     hometown_match = _hometown_score(source, candidate)
     college_match = _college_score(source, candidate)
+    # "Shared background" trigger for the second sort lane: same hometown
+    # OR same college is enough. The two cues are independent — see
+    # PRODUCT_VISION.md — so a candidate that matches on either qualifies.
+    has_shared_background = hometown_match > 0.0 or college_match > 0.0
     age_compatibility = _age_compatibility_score(source, candidate)
     semantic_similarity = _semantic_similarity_score(source, candidate, profile_embeddings)
 
@@ -166,6 +170,7 @@ def compute_match_score(
     return MatchBreakdown(
         total_score=round(total_score, 6),
         has_mutual_friends=has_mutual_friends,
+        has_shared_background=has_shared_background,
         social_boost=round(social_boost, 6),
         interest_overlap=round(interest_overlap, 6),
         liked_topic_overlap=round(liked_topic_overlap, 6),
@@ -186,12 +191,21 @@ def rank_candidates(
     """Rank candidates for one source profile.
 
     Sort strategy (descending):
-    1) `has_mutual_friends` (True before False)
-    2) `total_score`
+    1) `has_mutual_friends`         (True before False) — tier 1
+    2) `has_shared_background`      (True before False) — tier 2
+    3) `total_score`                (weighted compatibility)
 
-    This creates a clear two-lane policy:
-    - socially-connected candidates first
-    - then non-connected candidates by compatibility
+    This creates a clear three-lane policy that matches the product
+    tiering described in PRODUCT_VISION.md:
+
+    - Lane A — socially-connected candidates (≥1 mutual friend) always
+      rank first, regardless of any other signal.
+    - Lane B — no mutual friends, but same hometown OR same college.
+      Always ranks above Lane C even when Lane C has higher hobby /
+      age / semantic compatibility.
+    - Lane C — neither tier 1 nor tier 2. Ordered by the weighted
+      `total_score` so age, hobbies, and semantic similarity still
+      decide who's surfaced first.
     """
     scored = [
         (candidate, compute_match_score(source, candidate, weights, profile_embeddings))
@@ -199,6 +213,10 @@ def rank_candidates(
     ]
     return sorted(
         scored,
-        key=lambda item: (item[1].has_mutual_friends, item[1].total_score),
+        key=lambda item: (
+            item[1].has_mutual_friends,
+            item[1].has_shared_background,
+            item[1].total_score,
+        ),
         reverse=True,
     )

@@ -57,6 +57,10 @@ ranking signal.
 
 1. **Phase 1 — Deterministic weighted scoring** *(done)*
    Rules + Jaccard overlaps + step-down age ladder + mutual-friend social boost.
+   `rank_candidates` enforces the product tier order via a three-lane sort
+   (mutual friends → shared hometown/college → everyone else); the
+   weighted `total_score` only decides ordering *within* each lane, so
+   the tier order is a hard invariant.
 2. **Phase 2 — Text embeddings** *(done)*
    `bio_similarity` via cosine similarity between sentence-transformer
    embeddings, integrated into the same weighted framework. The ranker

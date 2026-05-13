@@ -112,11 +112,20 @@ ranker, stop — that belongs in the candidate-retrieval layer instead.
 
 A summary of the design choices for someone reading the code cold:
 
-- **Friends-of-friends dominates.** "Mutual friends" gets its own
-  separate boost lane on top of the weighted score — socially-connected
-  candidates are always shown before unconnected ones, regardless of how
-  high a stranger's compatibility score is. This mirrors the real-world
-  finding that friend-of-friend is the #1 path to new friendships.
+- **The ranker uses a three-lane sort that matches the tier order above.**
+  Lane A is candidates with ≥1 mutual friend; lane B is candidates with
+  same hometown OR same college (but no mutuals); lane C is everyone
+  else. Lane A always ranks above lane B, lane B always ranks above
+  lane C, regardless of the weighted score. Within each lane the
+  weighted `total_score` decides ordering, so age + hobbies + semantic
+  similarity still do useful work for the no-strong-signal users in
+  lane C. This makes the tier order a hard invariant — no clever
+  weight tuning can accidentally surface a hobby-overlap stranger
+  above a friend-of-a-friend or a fellow alum.
+- **Friends-of-friends dominates.** Lane A in the sort, plus a
+  `friend_common_boost` added to the score, push socially-connected
+  candidates above everyone else. This mirrors the real-world finding
+  that friend-of-friend is the #1 path to new friendships.
 - **Hometown / shared background ranks above generic interests.**
   Shared origin context is a stronger friendship predictor than
   overlapping hobby lists, and the weights reflect that. Hometown and
