@@ -28,6 +28,7 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from hangpost_matching import (  # noqa: E402
+    DEFAULT_RELEVANCE_THRESHOLD,
     RELEVANCE_GENERATORS,
     AblationRow,
     EvaluationResult,
@@ -39,8 +40,10 @@ from hangpost_matching import (  # noqa: E402
     evaluate_ranker,
     get_relevance_fn,
     load_profiles_from_csv,
+    load_verdicts,
     make_random_ranker,
     make_rules_ranker,
+    queries_from_verdicts,
 )
 
 
@@ -99,17 +102,45 @@ def main() -> None:
             "original thresholded synthesizer; 'noisy' flips a fraction of "
             "those labels; 'simulated' samples outcomes from a logistic "
             "model that mixes observable affinity with a hidden personality "
-            "vector the ranker can't see (more realistic ceiling)."
+            "vector the ranker can't see (more realistic ceiling). "
+            "Ignored when --labels is set."
         ),
+    )
+    parser.add_argument(
+        "--labels",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a JSONL file of LLM judge verdicts produced by "
+            "scripts/label.py. When set, queries are built directly from "
+            "the verdicts and --queries / --relevance are ignored."
+        ),
+    )
+    parser.add_argument(
+        "--label-threshold",
+        type=int,
+        default=DEFAULT_RELEVANCE_THRESHOLD,
+        help="Minimum judge rating (0-4) to count as relevant. Default 3.",
     )
     args = parser.parse_args()
 
     profiles = load_profiles_from_csv(Path(args.csv))
     print(f"Loaded {len(profiles)} profiles from {args.csv}")
 
-    relevance_fn = get_relevance_fn(args.relevance, args.seed)
-    print(f"Relevance generator: {args.relevance}")
-    queries = build_queries(profiles, args.queries, args.seed, relevance_fn=relevance_fn)
+    if args.labels is not None:
+        verdicts = load_verdicts(args.labels)
+        if not verdicts:
+            print(f"No verdicts found at {args.labels} — nothing to evaluate.")
+            return
+        queries = queries_from_verdicts(profiles, verdicts, threshold=args.label_threshold)
+        print(
+            f"Loaded {len(verdicts)} verdicts → {len(queries)} queries "
+            f"(threshold>={args.label_threshold})"
+        )
+    else:
+        relevance_fn = get_relevance_fn(args.relevance, args.seed)
+        print(f"Relevance generator: {args.relevance}")
+        queries = build_queries(profiles, args.queries, args.seed, relevance_fn=relevance_fn)
     queries_with_relevant = [q for q in queries if q[2]]
     avg_relevant = (
         sum(len(q[2]) for q in queries_with_relevant) / len(queries_with_relevant)

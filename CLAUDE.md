@@ -73,6 +73,19 @@ ranking signal.
    swap in real outcome labels (accepts, chats started, retention) as soon
    as those become available.
 
+3.5. **Phase 3.5 — LLM-as-judge labels + distillation** *(done)*
+   `hangpost_matching.llm_judge` sends every (source, candidate) pair to
+   Claude with a rubric grounded in PRODUCT_VISION.md and gets back a
+   0-4 friendship-likelihood rating. `scripts/label.py` runs the
+   labelling job; verdicts are append-only JSONL that doubles as a cache
+   (re-runs only call Claude for new pairs). Both `scripts/evaluate.py`
+   and `scripts/train.py` accept `--labels data/judge_labels.jsonl` to
+   evaluate / train against the judge's labels instead of the synthetic
+   `relevance_fn`s — the canonical teacher → student distillation arc
+   on top of the existing `LearnedRanker` scaffold. The Anthropic SDK
+   lives in the optional `[judge]` extra and is imported lazily; tests
+   use a deterministic `StubJudge` so CI never hits the API.
+
 ### Evaluation harness *(done)*
 
 `hangpost_matching.evaluation` implements precision@k, recall@k, MAP@k,
@@ -91,13 +104,14 @@ point. Use it to answer "which signal is actually carrying the ranker?"
 ### Test discipline
 
 Heavy dependencies (`lightgbm`, `sentence-transformers`, `numpy`,
-`joblib`, `fastapi`, `pydantic`, `uvicorn`) are confined to optional
-extras (`[ml]`, `[serve]`) and imported lazily. CI installs only
-`[dev]` and runs the full test suite against stubs that satisfy the
-`Embedder` and `Predictor` Protocols; server tests skip themselves
-when `fastapi` is not present. Real model + service behaviour is
-covered by `scripts/train.py`, `scripts/evaluate.py`, the notebooks,
-and the Docker image.
+`joblib`, `fastapi`, `pydantic`, `uvicorn`, `anthropic`) are confined
+to optional extras (`[ml]`, `[serve]`, `[judge]`) and imported lazily.
+CI installs only `[dev]` and runs the full test suite against stubs
+that satisfy the `Embedder`, `Predictor`, and `LLMJudge` Protocols;
+server tests skip themselves when `fastapi` is not present. Real
+model + service behaviour is covered by `scripts/train.py`,
+`scripts/evaluate.py`, `scripts/label.py`, the notebooks, and the
+Docker image.
 
 ### Documentation artifacts
 
