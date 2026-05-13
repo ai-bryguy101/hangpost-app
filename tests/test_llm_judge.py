@@ -55,9 +55,8 @@ class StubJudge:
     rating description.
     """
 
-    model = "stub-judge"
-
-    def __init__(self) -> None:
+    def __init__(self, model: str = "stub-judge") -> None:
+        self.model = model
         self.calls: list[tuple[str, str]] = []
 
     def judge(self, source: UserProfile, candidate: UserProfile) -> JudgeVerdict:
@@ -137,9 +136,13 @@ def test_load_verdicts_later_line_wins_for_same_pair(tmp_path: Path) -> None:
 
 
 def test_judge_pairs_skips_cached_pairs(tmp_path: Path) -> None:
-    """judge_pairs must not call the judge for pairs already in the cache."""
+    """judge_pairs must not call the judge for pairs already in the cache.
+
+    Cache hits require a matching model — here both the seeded verdict
+    and the judge use model="stub-judge".
+    """
     cache = tmp_path / "labels.jsonl"
-    cached = JudgeVerdict("alice", "bob", 4, "already done", "stub")
+    cached = JudgeVerdict("alice", "bob", 4, "already done", "stub-judge")
     append_verdict(cache, cached)
 
     judge = StubJudge()
@@ -155,6 +158,36 @@ def test_judge_pairs_skips_cached_pairs(tmp_path: Path) -> None:
     # Newly-judged pair is now in the file.
     on_disk = load_verdicts(cache)
     assert ("alice", "carol") in on_disk
+
+
+def test_judge_pairs_recalls_when_model_differs(tmp_path: Path) -> None:
+    """Cache hits must require a model match — a verdict from a different
+    model should NOT silently satisfy a lookup for this judge."""
+    cache = tmp_path / "labels.jsonl"
+    old_verdict = JudgeVerdict("alice", "bob", 4, "from model-a", "model-a")
+    append_verdict(cache, old_verdict)
+
+    judge = StubJudge(model="model-b")
+    alice = _profile("alice")
+    bob = _profile("bob", hometown="boston", college="bu")
+
+    verdicts = judge_pairs(judge, [(alice, bob)], cache)
+
+    # The judge was called even though (alice, bob) existed under model-a.
+    assert judge.calls == [("alice", "bob")]
+    # The returned map carries the new model's verdict, not the old.
+    assert verdicts[("alice", "bob")].model == "model-b"
+
+    # On disk: both verdicts are preserved (append-only, multi-model).
+    raw_lines = [
+        JudgeVerdict.from_json_line(line.strip())
+        for line in cache.read_text().splitlines()
+        if line.strip()
+    ]
+    models_for_pair = {
+        v.model for v in raw_lines if (v.source_id, v.candidate_id) == ("alice", "bob")
+    }
+    assert models_for_pair == {"model-a", "model-b"}
 
 
 def test_judge_pairs_progress_callback_runs(tmp_path: Path) -> None:

@@ -145,9 +145,15 @@ def main() -> None:
     profiles = load_profiles_from_csv(Path(args.csv))
     print(f"Loaded {len(profiles)} profiles from {args.csv}")
 
-    existing = load_verdicts(args.out)
-    if existing:
-        print(f"Found {len(existing)} verdicts already cached in {args.out}")
+    # Cache hits require a model match — verdicts from a different judge model
+    # do not count as already-done for this run.
+    existing_all = load_verdicts(args.out)
+    existing_for_model = {key: v for key, v in existing_all.items() if v.model == args.model}
+    if existing_all:
+        print(
+            f"Found {len(existing_all)} verdicts in {args.out} "
+            f"({len(existing_for_model)} for model={args.model})"
+        )
 
     rng = random.Random(args.seed)
     sources = rng.sample(profiles, min(args.queries, len(profiles)))
@@ -156,7 +162,7 @@ def main() -> None:
         candidates = [p for p in profiles if p.user_id != source.user_id]
         pairs.extend(_pairs_for_source(source, candidates, args.top_k, args.random_k, rng))
 
-    new_pairs = [(s, c) for (s, c) in pairs if (s.user_id, c.user_id) not in existing]
+    new_pairs = [(s, c) for (s, c) in pairs if (s.user_id, c.user_id) not in existing_for_model]
     print(
         f"Sampled {len(pairs)} (source, candidate) pairs "
         f"({len(new_pairs)} new, {len(pairs) - len(new_pairs)} cached)"

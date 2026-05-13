@@ -206,7 +206,17 @@ class LLMJudge(Protocol):
     Implementations are responsible for any retry / timeout policy
     appropriate to their backend. The disk cache in this module retries
     nothing — it caches results, not failures.
+
+    `model` is the judge's identifier (e.g. ``"claude-opus-4-7"``); it
+    is recorded on every verdict and used as part of the cache key so
+    re-running the labeller with a different judge model never silently
+    reuses another model's labels. Declared as a read-only property so
+    both `ClaudeJudge` (which exposes `model` as `@property`) and stubs
+    with a plain class/instance attribute satisfy the Protocol.
     """
+
+    @property
+    def model(self) -> str: ...
 
     def judge(self, source: UserProfile, candidate: UserProfile) -> JudgeVerdict: ...
 
@@ -333,11 +343,29 @@ def judge_pairs(
 ) -> VerdictMap:
     """Judge each pair, caching to `cache_path` on the fly.
 
-    Pairs already present in `cache_path` are skipped — the judge is
-    never called twice for the same (source_id, candidate_id) within a
-    single run, and re-running the labeller is idempotent.
+    The cache key includes the judge's model identifier: a verdict from
+    a *different* model never satisfies a lookup. This preserves the
+    teacher-swap workflow — re-running with ``--model claude-sonnet-4-6``
+    after a run with ``--model claude-opus-4-7`` will call the API for
+    every pair instead of silently keeping the opus labels. Verdicts
+    from other models stay on disk (the JSONL is append-only and
+    multi-model), they just don't count as cache hits for this judge.
+
+    The returned `VerdictMap` contains only verdicts produced by (or
+    already cached for) `judge.model`.
     """
-    verdicts = load_verdicts(cache_path)
+    existing_for_model: VerdictMap = {}
+    if cache_path.exists():
+        with cache_path.open() as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                verdict = JudgeVerdict.from_json_line(stripped)
+                if verdict.model == judge.model:
+                    existing_for_model[(verdict.source_id, verdict.candidate_id)] = verdict
+
+    verdicts: VerdictMap = dict(existing_for_model)
     pair_list = list(pairs)
     for i, (source, candidate) in enumerate(pair_list, start=1):
         key = (source.user_id, candidate.user_id)
