@@ -18,6 +18,11 @@ set, and the strongest one ships:
 3. **Phase 3 — Learned.** A LightGBM `LGBMRanker` (LambdaRank objective)
    trained on the same features as Phase 1+2, learning the weights from
    labeled query data.
+4. **Phase 3.5 — LLM-as-judge labels.** Send each (source, candidate)
+   pair to Claude with a rubric grounded in the product spec, cache
+   verdicts to JSONL, then evaluate and distill against those labels —
+   the canonical teacher → student pattern. The synthetic
+   `relevance_fn`s are still available as a cost-free fallback.
 
 All three are evaluated by the same harness (`hangpost_matching.evaluation`)
 which implements precision@k / recall@k / NDCG@k / MAP@k from scratch.
@@ -41,6 +46,23 @@ python examples/embeddings_demo.py        # Phase 2: semantic similarity
 python scripts/train.py --with-embeddings # Phase 3: train + held-out comparison
 python scripts/evaluate.py --with-embeddings \
     --learned-model models/learned_ranker.joblib
+```
+
+To label and distill with Claude as the teacher (Phase 3.5):
+
+```bash
+pip install -e ".[ml,judge]"
+export ANTHROPIC_API_KEY=...
+
+# Send pairs to Claude, cache verdicts to JSONL (idempotent — re-runs only
+# call the API for new pairs):
+python scripts/label.py --queries 30 --top-k 15 --random-k 15
+
+# Evaluate every ranker against the judge's labels:
+python scripts/evaluate.py --labels data/judge_labels.jsonl
+
+# Distill: train LightGBM on the judge's labels.
+python scripts/train.py --labels data/judge_labels.jsonl --with-embeddings
 ```
 
 To deploy as an HTTP service:

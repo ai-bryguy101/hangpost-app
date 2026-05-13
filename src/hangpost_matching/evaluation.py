@@ -513,8 +513,7 @@ def ablate_weights(
     for name in targets:
         if name not in known:
             raise ValueError(
-                f"Unknown ScoringWeights field {name!r}. "
-                f"Known fields: {sorted(known)}"
+                f"Unknown ScoringWeights field {name!r}. Known fields: {sorted(known)}"
             )
 
     queries = list(queries)

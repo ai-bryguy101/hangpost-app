@@ -38,6 +38,7 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from hangpost_matching import (  # noqa: E402
+    DEFAULT_RELEVANCE_THRESHOLD,
     RELEVANCE_GENERATORS,
     EvaluationResult,
     LearnedRanker,
@@ -47,8 +48,10 @@ from hangpost_matching import (  # noqa: E402
     evaluate_ranker,
     get_relevance_fn,
     load_profiles_from_csv,
+    load_verdicts,
     make_random_ranker,
     make_rules_ranker,
+    queries_from_verdicts,
     split_queries,
 )
 
@@ -162,8 +165,26 @@ def main() -> None:
         help=(
             "Which relevance label generator to use during training and "
             "evaluation. 'simulated' produces a more realistic ceiling by "
-            "introducing hidden confounders and noise."
+            "introducing hidden confounders and noise. "
+            "Ignored when --labels is set."
         ),
+    )
+    parser.add_argument(
+        "--labels",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a JSONL file of LLM judge verdicts produced by "
+            "scripts/label.py. When set, queries are built directly from "
+            "the verdicts and --queries / --relevance are ignored — this is "
+            "the teacher→student distillation path."
+        ),
+    )
+    parser.add_argument(
+        "--label-threshold",
+        type=int,
+        default=DEFAULT_RELEVANCE_THRESHOLD,
+        help="Minimum judge rating (0-4) to count as relevant. Default 3.",
     )
     parser.add_argument(
         "--out",
@@ -203,18 +224,31 @@ def main() -> None:
 
     tracker = _Tracker(enabled=args.mlflow, experiment=args.mlflow_experiment)
 
-    with tracker.run(run_name=f"{args.relevance}-{'emb' if args.with_embeddings else 'no_emb'}"):
+    label_source = f"labels:{args.labels.name}" if args.labels is not None else args.relevance
+    run_name = f"{label_source}-{'emb' if args.with_embeddings else 'no_emb'}"
+
+    with tracker.run(run_name=run_name):
         profiles = load_profiles_from_csv(Path(args.csv))
         print(f"Loaded {len(profiles)} profiles from {args.csv}")
 
-        relevance_fn = get_relevance_fn(args.relevance, args.seed)
-        print(f"Relevance generator: {args.relevance}")
-
-        queries = [
-            q
-            for q in build_queries(profiles, args.queries, args.seed, relevance_fn=relevance_fn)
-            if q[2]
-        ]
+        if args.labels is not None:
+            verdicts = load_verdicts(args.labels)
+            if not verdicts:
+                raise SystemExit(f"No verdicts found at {args.labels}")
+            judged = queries_from_verdicts(profiles, verdicts, threshold=args.label_threshold)
+            queries = [q for q in judged if q[2]]
+            print(
+                f"Loaded {len(verdicts)} verdicts → {len(queries)} queries "
+                f"with ≥1 positive (threshold>={args.label_threshold})"
+            )
+        else:
+            relevance_fn = get_relevance_fn(args.relevance, args.seed)
+            print(f"Relevance generator: {args.relevance}")
+            queries = [
+                q
+                for q in build_queries(profiles, args.queries, args.seed, relevance_fn=relevance_fn)
+                if q[2]
+            ]
         train_queries, test_queries = split_queries(queries, args.train_fraction, args.seed)
         print(
             f"{len(train_queries)} train queries / {len(test_queries)} test queries "
@@ -229,7 +263,8 @@ def main() -> None:
                 "k": args.k,
                 "seed": args.seed,
                 "with_embeddings": args.with_embeddings,
-                "relevance": args.relevance,
+                "label_source": label_source,
+                "label_threshold": args.label_threshold,
                 "n_estimators": args.n_estimators,
                 "learning_rate": args.learning_rate,
                 "num_leaves": args.num_leaves,

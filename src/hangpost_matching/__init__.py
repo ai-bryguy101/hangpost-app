@@ -32,16 +32,37 @@ from .evaluation import (
     synthesize_relevance,
 )
 from .learning import FEATURE_NAMES, LearnedRanker, Predictor, extract_features
+from .llm_judge import (
+    DEFAULT_MODEL as JUDGE_DEFAULT_MODEL,
+)
+from .llm_judge import (
+    DEFAULT_RELEVANCE_THRESHOLD,
+    JUDGE_SYSTEM_PROMPT,
+    ClaudeJudge,
+    JudgeVerdict,
+    LLMJudge,
+    append_verdict,
+    judge_pairs,
+    load_verdicts,
+    pair_to_prompt,
+    queries_from_verdicts,
+)
 from .models import MatchBreakdown, ScoringWeights, UserProfile
 from .scoring import compute_match_score, rank_candidates
 
 __all__ = [
     "ABLATABLE_WEIGHT_FIELDS",
+    "DEFAULT_RELEVANCE_THRESHOLD",
     "FEATURE_NAMES",
+    "JUDGE_DEFAULT_MODEL",
+    "JUDGE_SYSTEM_PROMPT",
     "RELEVANCE_GENERATORS",
     "AblationRow",
+    "ClaudeJudge",
     "Embedder",
     "EvaluationResult",
+    "JudgeVerdict",
+    "LLMJudge",
     "LearnedRanker",
     "MatchBreakdown",
     "Predictor",
@@ -52,6 +73,7 @@ __all__ = [
     "UserProfile",
     "Vector",
     "ablate_weights",
+    "append_verdict",
     "average_precision_at_k",
     "build_queries",
     "compute_match_score",
@@ -60,14 +82,18 @@ __all__ = [
     "evaluate_ranker",
     "extract_features",
     "get_relevance_fn",
+    "judge_pairs",
     "load_profiles_from_csv",
+    "load_verdicts",
     "make_noisy_relevance_fn",
     "make_random_ranker",
     "make_rules_ranker",
     "make_simulated_outcome_fn",
     "ndcg_at_k",
+    "pair_to_prompt",
     "precision_at_k",
     "profile_to_text",
+    "queries_from_verdicts",
     "rank_candidates",
     "recall_at_k",
     "split_queries",
