@@ -224,9 +224,7 @@ def main() -> None:
 
     tracker = _Tracker(enabled=args.mlflow, experiment=args.mlflow_experiment)
 
-    label_source = (
-        f"labels:{args.labels.name}" if args.labels is not None else args.relevance
-    )
+    label_source = f"labels:{args.labels.name}" if args.labels is not None else args.relevance
     run_name = f"{label_source}-{'emb' if args.with_embeddings else 'no_emb'}"
 
     with tracker.run(run_name=run_name):
@@ -237,9 +235,7 @@ def main() -> None:
             verdicts = load_verdicts(args.labels)
             if not verdicts:
                 raise SystemExit(f"No verdicts found at {args.labels}")
-            judged = queries_from_verdicts(
-                profiles, verdicts, threshold=args.label_threshold
-            )
+            judged = queries_from_verdicts(profiles, verdicts, threshold=args.label_threshold)
             queries = [q for q in judged if q[2]]
             print(
                 f"Loaded {len(verdicts)} verdicts → {len(queries)} queries "
@@ -250,9 +246,7 @@ def main() -> None:
             print(f"Relevance generator: {args.relevance}")
             queries = [
                 q
-                for q in build_queries(
-                    profiles, args.queries, args.seed, relevance_fn=relevance_fn
-                )
+                for q in build_queries(profiles, args.queries, args.seed, relevance_fn=relevance_fn)
                 if q[2]
             ]
         train_queries, test_queries = split_queries(queries, args.train_fraction, args.seed)

@@ -248,8 +248,7 @@ class ClaudeJudge:
             import anthropic
         except ImportError as exc:
             raise ImportError(
-                "anthropic is required for ClaudeJudge. "
-                'Install with: pip install -e ".[judge]"'
+                'anthropic is required for ClaudeJudge. Install with: pip install -e ".[judge]"'
             ) from exc
         self._client = anthropic.Anthropic(api_key=api_key)
         self._model = model
@@ -387,10 +386,6 @@ def queries_from_verdicts(
             candidate = by_id.get(cid)
             if candidate is not None:
                 candidates.append(candidate)
-        relevant = {
-            cid
-            for cid, rating in ratings.items()
-            if rating >= threshold and cid in by_id
-        }
+        relevant = {cid for cid, rating in ratings.items() if rating >= threshold and cid in by_id}
         queries.append((source, candidates, relevant))
     return queries

@@ -156,9 +156,7 @@ def main() -> None:
         candidates = [p for p in profiles if p.user_id != source.user_id]
         pairs.extend(_pairs_for_source(source, candidates, args.top_k, args.random_k, rng))
 
-    new_pairs = [
-        (s, c) for (s, c) in pairs if (s.user_id, c.user_id) not in existing
-    ]
+    new_pairs = [(s, c) for (s, c) in pairs if (s.user_id, c.user_id) not in existing]
     print(
         f"Sampled {len(pairs)} (source, candidate) pairs "
         f"({len(new_pairs)} new, {len(pairs) - len(new_pairs)} cached)"
