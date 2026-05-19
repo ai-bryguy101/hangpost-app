@@ -65,11 +65,23 @@ DROPDOWN_CHOICES: list[tuple[str, str]] = sorted(
 
 
 def _lane_badge(breakdown: MatchBreakdown) -> str:
+    """Six-tier badge reflecting the lexicographic sort in rank_candidates.
+
+    Both-background candidates outrank either-background as a HARD tier,
+    so the badge surfaces that — otherwise the user can't tell from
+    score numbers alone why a candidate ranked higher.
+    """
+    if breakdown.has_mutual_friends and breakdown.has_both_shared_background:
+        return "🌟 **Tier 1 — mutual friend + same hometown AND college**"
+    if breakdown.has_mutual_friends and breakdown.has_shared_background:
+        return "🟢 **Tier 2 — mutual friend + shared background**"
     if breakdown.has_mutual_friends:
-        return "🟢 **Lane A — mutual friends**"
+        return "🟢 **Tier 3 — mutual friend**"
+    if breakdown.has_both_shared_background:
+        return "🔵 **Tier 4 — same hometown AND same college**"
     if breakdown.has_shared_background:
-        return "🔵 **Lane B — shared background**"
-    return "⚪ Lane C — general compatibility"
+        return "🔵 **Tier 5 — shared hometown OR college**"
+    return "⚪ Tier 6 — general compatibility"
 
 
 def _profile_summary(profile: UserProfile) -> str:
@@ -138,13 +150,17 @@ with gr.Blocks(title="Hangpost Matching Engine") as demo:
         "# Hangpost Matching Engine — Live Demo\n\n"
         "Pick a source profile and see who the rules-based ranker recommends, "
         "with a full breakdown of *why* each candidate ranked where it did.\n\n"
-        "**Tiering policy.** "
-        "🟢 Lane A (mutual friends) always ranks above 🔵 Lane B (shared hometown "
-        "or college), which always ranks above ⚪ Lane C (everyone else). Within "
-        "each lane, candidates are ordered by the weighted compatibility score. "
-        "This makes the friends-of-friends → shared-background → hobbies tier "
-        "order a hard invariant — no clever weight tuning can put a hobby-match "
-        "stranger above a friend-of-a-friend.\n\n"
+        "**Tiering policy** (top to bottom, hard invariant — no weight tuning "
+        "can break it):\n\n"
+        "- 🌟 Tier 1: mutual friend **and** same hometown **and** same college\n"
+        "- 🟢 Tier 2: mutual friend + shared hometown OR college\n"
+        "- 🟢 Tier 3: mutual friend, no background overlap\n"
+        "- 🔵 Tier 4: no mutual + same hometown **and** same college\n"
+        "- 🔵 Tier 5: no mutual + same hometown OR same college\n"
+        "- ⚪ Tier 6: everyone else\n\n"
+        "Within each tier, candidates are ordered by the weighted compatibility "
+        "score (hobbies, age closeness, semantic similarity) so the soft "
+        "signals still decide who's surfaced first among peers.\n\n"
         "[Source on GitHub →](https://github.com/ai-bryguy101/hangpost-app)"
     )
 

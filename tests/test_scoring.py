@@ -218,3 +218,145 @@ def test_age_compatibility_uses_10_percent_step_down_per_year() -> None:
     assert compute_match_score(source, one_year_apart).age_compatibility == 0.9
     assert compute_match_score(source, two_years_apart).age_compatibility == 0.8
     assert compute_match_score(source, ten_years_apart).age_compatibility == 0.0
+
+
+# ---------- six-tier sort: hometown+college is a hard tier over either-alone ----------
+
+
+def test_both_background_outranks_single_background_even_with_weaker_hobbies() -> None:
+    """Same hometown AND same college must beat same hometown alone — even
+    when the hometown-only candidate has dramatically stronger hobby
+    overlap. The both-match is a HARD tier, not a score nudge."""
+    source = UserProfile(
+        user_id="source",
+        interests={"hiking", "coding", "music"},
+        liked_topics={"travel"},
+        hometown="austin",
+        college="ut",
+        age=30,
+    )
+    both_match = UserProfile(
+        user_id="both",
+        interests=set(),  # zero hobby overlap
+        liked_topics=set(),
+        hometown="austin",  # matches
+        college="ut",  # matches
+        age=99,  # 0 age compatibility
+    )
+    hometown_only_with_great_hobbies = UserProfile(
+        user_id="hometown_only",
+        interests={"hiking", "coding", "music"},  # perfect hobby overlap
+        liked_topics={"travel"},
+        hometown="austin",
+        college="harvard",  # doesn't match
+        age=30,  # perfect age
+    )
+    ranked = rank_candidates(source, [hometown_only_with_great_hobbies, both_match])
+    assert ranked[0][0].user_id == "both"
+    assert ranked[1][0].user_id == "hometown_only"
+
+
+def test_breakdown_flags_both_shared_background_only_when_both_match() -> None:
+    source = UserProfile(user_id="src", hometown="austin", college="ut")
+    both = UserProfile(user_id="both", hometown="austin", college="ut")
+    hometown_only = UserProfile(user_id="ho", hometown="austin", college="harvard")
+    college_only = UserProfile(user_id="co", hometown="seattle", college="ut")
+    neither = UserProfile(user_id="ne", hometown="seattle", college="harvard")
+
+    assert compute_match_score(source, both).has_both_shared_background is True
+    assert compute_match_score(source, hometown_only).has_both_shared_background is False
+    assert compute_match_score(source, college_only).has_both_shared_background is False
+    assert compute_match_score(source, neither).has_both_shared_background is False
+
+    # Sanity: has_shared_background still True for single-signal matches.
+    assert compute_match_score(source, hometown_only).has_shared_background is True
+    assert compute_match_score(source, college_only).has_shared_background is True
+    assert compute_match_score(source, neither).has_shared_background is False
+
+
+def test_mutual_friend_plus_both_backgrounds_plus_same_age_is_absolute_top() -> None:
+    """The 'perfect match' invariant from the product spec: a candidate
+    with a mutual friend, same hometown, same college, and the same age
+    is the highest-ranked result. Other Lane A candidates without the
+    background match — even with many mutual friends and great hobbies —
+    must rank below."""
+    source = UserProfile(
+        user_id="source",
+        interests={"hiking", "coding"},
+        liked_topics={"travel"},
+        hometown="austin",
+        college="ut",
+        age=30,
+        mutual_friend_ids={"f1"},
+    )
+    perfect = UserProfile(
+        user_id="perfect",
+        interests=set(),  # no hobby overlap
+        liked_topics=set(),
+        hometown="austin",  # match
+        college="ut",  # match
+        age=30,  # match
+        mutual_friend_ids={"f1"},  # 1 mutual
+    )
+    many_mutual_no_bg = UserProfile(
+        user_id="many_mutual_no_bg",
+        interests={"hiking", "coding"},  # perfect hobby overlap
+        liked_topics={"travel"},
+        hometown="seattle",  # no match
+        college="harvard",  # no match
+        age=30,
+        mutual_friend_ids={f"f{i}" for i in range(1, 11)},  # 10 mutuals
+    )
+    one_mutual_one_bg = UserProfile(
+        user_id="one_mutual_one_bg",
+        interests={"hiking", "coding"},
+        liked_topics={"travel"},
+        hometown="austin",  # match
+        college="harvard",  # no match
+        age=30,
+        mutual_friend_ids={"f1"},
+    )
+    no_mutual_both_bg = UserProfile(
+        user_id="no_mutual_both_bg",
+        interests={"hiking", "coding"},
+        liked_topics={"travel"},
+        hometown="austin",
+        college="ut",
+        age=30,
+        mutual_friend_ids=set(),  # no mutual
+    )
+
+    ranked = rank_candidates(
+        source, [many_mutual_no_bg, one_mutual_one_bg, no_mutual_both_bg, perfect]
+    )
+    order = [c.user_id for c, _ in ranked]
+    # Tier 1: perfect (mutual + both bg)
+    # Tier 2: one_mutual_one_bg (mutual + one bg)
+    # Tier 3: many_mutual_no_bg (mutual only)
+    # Tier 4: no_mutual_both_bg (no mutual + both bg)
+    assert order == [
+        "perfect",
+        "one_mutual_one_bg",
+        "many_mutual_no_bg",
+        "no_mutual_both_bg",
+    ]
+
+
+def test_no_mutual_both_background_outranks_no_mutual_either_background() -> None:
+    """Lane B+ (both bg, no mutual) must rank above Lane B (one bg, no mutual)."""
+    source = UserProfile(user_id="src", hometown="austin", college="ut", age=30)
+    both_bg = UserProfile(
+        user_id="both_bg",
+        hometown="austin",
+        college="ut",
+        age=99,  # weak age
+    )
+    one_bg_strong = UserProfile(
+        user_id="one_bg",
+        hometown="austin",
+        college="harvard",
+        age=30,  # perfect age
+        interests={"hiking", "coding", "music"},
+    )
+    ranked = rank_candidates(source, [one_bg_strong, both_bg])
+    assert ranked[0][0].user_id == "both_bg"

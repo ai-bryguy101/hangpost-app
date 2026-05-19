@@ -108,11 +108,18 @@ class MatchBreakdown:
     has_mutual_friends: bool
 
     # Whether the candidate shares hometown OR college with the source.
-    # Drives the second lane in `rank_candidates`'s three-lane sort: after
-    # mutual-friend candidates, candidates with shared background rank
-    # above candidates with neither, regardless of how well the latter
-    # score on hobbies / age / semantic similarity.
+    # Drives one tier in `rank_candidates`'s sort: after mutual-friend
+    # candidates, candidates with shared background rank above candidates
+    # with neither, regardless of how well the latter score on hobbies /
+    # age / semantic similarity.
     has_shared_background: bool
+
+    # Whether the candidate shares BOTH hometown AND college (strict
+    # version of `has_shared_background`). Drives a stronger sub-tier:
+    # within each mutual-friends bucket, candidates who hit both signals
+    # outrank candidates who hit only one, regardless of hobbies. This
+    # is a hard guarantee, not a score nudge — see `rank_candidates`.
+    has_both_shared_background: bool
 
     # The extra social boost applied when `has_mutual_friends` is True.
     social_boost: float

@@ -112,16 +112,25 @@ ranker, stop — that belongs in the candidate-retrieval layer instead.
 
 A summary of the design choices for someone reading the code cold:
 
-- **The ranker uses a three-lane sort that matches the tier order above.**
-  Lane A is candidates with ≥1 mutual friend; lane B is candidates with
-  same hometown OR same college (but no mutuals); lane C is everyone
-  else. Lane A always ranks above lane B, lane B always ranks above
-  lane C, regardless of the weighted score. Within each lane the
-  weighted `total_score` decides ordering, so age + hobbies + semantic
-  similarity still do useful work for the no-strong-signal users in
-  lane C. This makes the tier order a hard invariant — no clever
-  weight tuning can accidentally surface a hobby-overlap stranger
-  above a friend-of-a-friend or a fellow alum.
+- **The ranker uses a six-tier sort that matches the tier order above.**
+  Lexicographically:
+  1. mutual friend + same hometown AND same college (Tier 1, the
+     "perfect match" lane);
+  2. mutual friend + same hometown OR same college (Tier 2);
+  3. mutual friend, no background overlap (Tier 3);
+  4. no mutual + same hometown AND same college (Tier 4);
+  5. no mutual + same hometown OR same college (Tier 5);
+  6. neither (Tier 6).
+
+  Both-background (same hometown AND same college) is a HARD tier above
+  either-background — a candidate hitting both signals always outranks
+  a candidate hitting just one, even when the one-background candidate
+  has dramatically stronger hobby / age / semantic overlap. Within each
+  tier, the additive `total_score` decides ordering so the soft signals
+  still do meaningful work among peers. Combined, this makes "mutual
+  friend + same hometown + same college + same age" the absolute top
+  of every result list, by construction — no weight tuning can move
+  someone above that.
 - **Friends-of-friends dominates.** Lane A in the sort, plus a
   `friend_common_boost` added to the score, push socially-connected
   candidates above everyone else. This mirrors the real-world finding
