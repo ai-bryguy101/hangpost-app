@@ -166,10 +166,13 @@ def compute_match_score(
 
     hometown_match = _hometown_score(source, candidate)
     college_match = _college_score(source, candidate)
-    # "Shared background" trigger for the second sort lane: same hometown
-    # OR same college is enough. The two cues are independent — see
-    # PRODUCT_VISION.md — so a candidate that matches on either qualifies.
+    # "Shared background" trigger: same hometown OR same college is enough
+    # to qualify. `has_both_shared_background` is the stricter sub-tier —
+    # candidates that hit BOTH outrank candidates that hit only one,
+    # regardless of how strong their hobby / age signals are. See
+    # PRODUCT_VISION.md.
     has_shared_background = hometown_match > 0.0 or college_match > 0.0
+    has_both_shared_background = hometown_match > 0.0 and college_match > 0.0
     age_compatibility = _age_compatibility_score(source, candidate)
     semantic_similarity = _semantic_similarity_score(source, candidate, profile_embeddings)
 
@@ -199,6 +202,7 @@ def compute_match_score(
         total_score=round(total_score, 6),
         has_mutual_friends=has_mutual_friends,
         has_shared_background=has_shared_background,
+        has_both_shared_background=has_both_shared_background,
         social_boost=round(social_boost, 6),
         interest_overlap=round(interest_overlap, 6),
         liked_topic_overlap=round(liked_topic_overlap, 6),
@@ -218,22 +222,32 @@ def rank_candidates(
 ) -> list[tuple[UserProfile, MatchBreakdown]]:
     """Rank candidates for one source profile.
 
-    Sort strategy (descending):
-    1) `has_mutual_friends`         (True before False) — tier 1
-    2) `has_shared_background`      (True before False) — tier 2
-    3) `total_score`                (weighted compatibility)
+    Sort strategy (descending), with four lexicographic tiers:
+    1) `has_mutual_friends`             (True before False)
+    2) `has_both_shared_background`     (True before False)
+    3) `has_shared_background`          (True before False)
+    4) `total_score`                    (weighted compatibility)
 
-    This creates a clear three-lane policy that matches the product
-    tiering described in PRODUCT_VISION.md:
+    Combined, that produces six effective tiers:
 
-    - Lane A — socially-connected candidates (≥1 mutual friend) always
-      rank first, regardless of any other signal.
-    - Lane B — no mutual friends, but same hometown OR same college.
-      Always ranks above Lane C even when Lane C has higher hobby /
-      age / semantic compatibility.
-    - Lane C — neither tier 1 nor tier 2. Ordered by the weighted
-      `total_score` so age, hobbies, and semantic similarity still
-      decide who's surfaced first.
+    - Tier 1: mutual friend + same hometown AND same college   (Lane A++)
+    - Tier 2: mutual friend + same hometown OR same college    (Lane A+)
+    - Tier 3: mutual friend, no background match               (Lane A)
+    - Tier 4: no mutual + same hometown AND same college       (Lane B+)
+    - Tier 5: no mutual + same hometown OR same college        (Lane B)
+    - Tier 6: neither                                          (Lane C)
+
+    Both-background is a HARD tier above either-background — a candidate
+    who matches on both hometown and college will outrank a candidate
+    who matches on just one, regardless of how much higher the latter
+    scores on hobbies / age / semantic similarity. Within each tier,
+    `total_score` still decides ordering, so the soft signals do
+    meaningful work for the bulk of candidates.
+
+    The combination of mutual friend + same hometown + same college
+    (Tier 1) is, by construction, the highest possible position any
+    candidate can occupy — and within Tier 1 the additive total_score
+    promotes the same-age candidate to the very top.
     """
     scored = [
         (candidate, compute_match_score(source, candidate, weights, profile_embeddings))
@@ -243,6 +257,7 @@ def rank_candidates(
         scored,
         key=lambda item: (
             item[1].has_mutual_friends,
+            item[1].has_both_shared_background,
             item[1].has_shared_background,
             item[1].total_score,
         ),
