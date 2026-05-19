@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Nightly smoke run so the [ml] stack doesn't silently rot.
+    - cron: "0 6 * * *"
 
 jobs:
   test:
@@ -37,3 +40,54 @@ jobs:
 
       - name: Run tests
         run: pytest
+
+  ml-smoke:
+    # Validates that the real [ml] + [serve] + [judge] stack still installs
+    # and exercises the LightGBM training path on a tiny query slice. Runs
+    # nightly and on manual dispatch — gated off normal PRs to keep CI
+    # cycle time low and to avoid downloading model weights on every push.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install full ML stack
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ml,serve,judge]"
+
+      - name: Run tests with ML stack present
+        run: pytest
+
+      - name: Smoke-train LightGBM ranker on a tiny slice
+        run: |
+          python scripts/train.py \
+            --queries 10 \
+            --train-fraction 0.5 \
+            --k 5 \
+            --relevance simulated \
+            --n-estimators 20 \
+            --out models/_smoke_ranker.joblib
+
+      - name: Smoke-evaluate ablation harness
+        run: python scripts/evaluate.py --queries 20 --k 5 --ablation
+
+      - name: Smoke-start FastAPI server
+        run: |
+          uvicorn hangpost_matching.server:app --host 127.0.0.1 --port 8765 &
+          SERVER_PID=$!
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8765/healthz > /dev/null; then
+              echo "server is up"
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8765/healthz
+          kill $SERVER_PID

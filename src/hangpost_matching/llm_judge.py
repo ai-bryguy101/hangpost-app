@@ -389,3 +389,20 @@ def queries_from_verdicts(
         relevant = {cid for cid, rating in ratings.items() if rating >= threshold and cid in by_id}
         queries.append((source, candidates, relevant))
     return queries
+
+
+def graded_gains_from_verdicts(
+    verdicts: Mapping[tuple[str, str], JudgeVerdict],
+) -> dict[str, dict[str, float]]:
+    """Build per-source graded gain maps from the judge's 0-4 ratings.
+
+    Returns `{source_id: {candidate_id: gain}}` where `gain = 2**rating - 1`.
+    That's the textbook NDCG gain formulation: a rating-4 candidate is
+    worth ~16x a rating-1 candidate at the same rank, so the metric
+    actually punishes the ranker for surfacing borderline matches above
+    obvious matches — something the binary threshold throws away.
+    """
+    out: dict[str, dict[str, float]] = {}
+    for (sid, cid), verdict in verdicts.items():
+        out.setdefault(sid, {})[cid] = float(2**verdict.rating - 1)
+    return out

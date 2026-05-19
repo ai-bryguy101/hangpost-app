@@ -14,6 +14,34 @@ from collections.abc import Mapping
 from .embeddings import Vector, cosine_similarity
 from .models import MatchBreakdown, ScoringWeights, UserProfile
 
+# A source is "cold-start" when it has fewer than this many populated
+# signal fields. The threshold is deliberately permissive: a user with
+# only an age and an interest list still falls below it, which is the
+# population a cold-start fallback is meant to help.
+COLD_START_FIELD_THRESHOLD = 3
+
+
+def is_cold_start(profile: UserProfile) -> bool:
+    """Return True if `profile` has too few signals for the main ranker.
+
+    "Cold start" here means a brand-new user the engine knows almost
+    nothing about — no mutual friends, no hometown/college, and at most
+    a couple of interests. The full ranker will dump them straight to
+    Lane C with a near-zero score; the cold-start fallback exists to
+    give them a useful list anyway.
+    """
+    signals = sum(
+        [
+            bool(profile.mutual_friend_ids),
+            bool(profile.hometown),
+            bool(profile.college),
+            len(profile.interests) >= 2,
+            len(profile.liked_topics) >= 2,
+            profile.age is not None,
+        ]
+    )
+    return signals < COLD_START_FIELD_THRESHOLD
+
 
 def _jaccard_similarity(left: set[str], right: set[str]) -> float:
     """Return overlap ratio between two sets using Jaccard similarity.
@@ -216,6 +244,48 @@ def rank_candidates(
         key=lambda item: (
             item[1].has_mutual_friends,
             item[1].has_shared_background,
+            item[1].total_score,
+        ),
+        reverse=True,
+    )
+
+
+def rank_candidates_with_cold_start(
+    source: UserProfile,
+    candidates: list[UserProfile],
+    weights: ScoringWeights | None = None,
+    profile_embeddings: Mapping[str, Vector] | None = None,
+) -> list[tuple[UserProfile, MatchBreakdown]]:
+    """Like `rank_candidates`, but for very sparse source profiles falls
+    back to a candidate-popularity prior (most-connected first).
+
+    Behaviour:
+    - If the source profile is NOT cold-start: identical to
+      `rank_candidates`.
+    - If the source IS cold-start: ranks by candidate's own
+      `mutual_friend_ids` size, then by interest-list size — both proxies
+      for "this candidate is active and well-connected, surfacing them
+      to a new user is a safer bet than surfacing a similarly-empty
+      stranger." The full `MatchBreakdown` is still returned so the UI
+      stays explainable.
+
+    Why this matters: a brand-new user with no friends, no hometown, and
+    one interest gets dumped into Lane C by the main ranker with a
+    near-zero score, which means their feed is effectively random. The
+    fallback gives them a populated, defensible list on day one.
+    """
+    if not is_cold_start(source):
+        return rank_candidates(source, candidates, weights, profile_embeddings)
+
+    scored = [
+        (candidate, compute_match_score(source, candidate, weights, profile_embeddings))
+        for candidate in candidates
+    ]
+    return sorted(
+        scored,
+        key=lambda item: (
+            len(item[0].mutual_friend_ids),
+            len(item[0].interests),
             item[1].total_score,
         ),
         reverse=True,
