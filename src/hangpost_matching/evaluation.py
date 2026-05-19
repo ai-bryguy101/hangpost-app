@@ -106,6 +106,32 @@ def ndcg_at_k(retrieved: Sequence[str], relevant: set[str], k: int) -> float:
     return dcg / idcg if idcg > 0 else 0.0
 
 
+def ndcg_at_k_graded(
+    retrieved: Sequence[str],
+    gains: Mapping[str, float],
+    k: int,
+) -> float:
+    """NDCG at k with graded relevance gains.
+
+    `gains[item_id]` is the relevance gain for that item (typically
+    `2**rating - 1`, the textbook formulation, so a rating of 4 dominates
+    a rating of 3 dominates a rating of 2). Items missing from `gains`
+    contribute 0.
+
+    DCG  = sum( gain[i] / log2(i + 2) ) for i in 0..k-1
+    IDCG = same but with the largest gains packed at the top.
+    NDCG = DCG / IDCG (perfect ranking scores 1.0; an all-zero ground
+    truth scores 0.0).
+    """
+    if k <= 0:
+        return 0.0
+    top_k = retrieved[:k]
+    dcg = sum(gains.get(item, 0.0) / math.log2(i + 2) for i, item in enumerate(top_k))
+    ideal_gains = sorted(gains.values(), reverse=True)[:k]
+    idcg = sum(gain / math.log2(i + 2) for i, gain in enumerate(ideal_gains))
+    return dcg / idcg if idcg > 0 else 0.0
+
+
 @dataclass(frozen=True)
 class EvaluationResult:
     """Average metrics across a query set."""
@@ -116,6 +142,31 @@ class EvaluationResult:
     recall: float
     map: float
     ndcg: float
+
+
+def intra_list_diversity(
+    retrieved: Sequence[str],
+    embeddings: Mapping[str, Vector],
+    k: int = 10,
+) -> float:
+    """Average pairwise *dissimilarity* (1 - cosine) of the top-k items.
+
+    A relevance-only ranker can quietly degenerate into "always show the
+    same kind of person." Tracking diversity alongside NDCG catches that.
+    Returns 0.0 when fewer than 2 of the top-k have embeddings.
+    """
+    from .embeddings import cosine_similarity
+
+    vectors = [embeddings[item] for item in retrieved[:k] if item in embeddings]
+    if len(vectors) < 2:
+        return 0.0
+    pairs = 0
+    total = 0.0
+    for i in range(len(vectors)):
+        for j in range(i + 1, len(vectors)):
+            total += 1.0 - cosine_similarity(vectors[i], vectors[j])
+            pairs += 1
+    return total / pairs if pairs > 0 else 0.0
 
 
 # A query is (source, candidates_to_rank, ground_truth_relevant_ids).
@@ -155,6 +206,69 @@ def evaluate_ranker(
         map=map_total / n,
         ndcg=ndcg_total / n,
     )
+
+
+# ---------- subgroup / fairness analysis ----------
+#
+# A single macro-averaged NDCG@10 number can hide big subgroup gaps. The
+# helpers below let you ask "is the ranker working *equally well* for
+# under-25s and over-40s? for users with rare hometowns vs common ones?
+# for new users with no mutual friends vs well-connected users?" That's
+# the conversation a fairness-aware reviewer wants to have, and it's the
+# first metric to surface when you start logging real-world outcomes.
+
+
+def evaluate_ranker_by_subgroup(
+    ranker: Ranker,
+    queries: Iterable[Query],
+    group_fn: Callable[[UserProfile], str],
+    k: int = 10,
+) -> dict[str, EvaluationResult]:
+    """Partition queries by `group_fn(source)` and evaluate per group.
+
+    Returns a dict keyed by subgroup label. Use this to surface
+    fairness/coverage gaps: if NDCG@10 is 0.31 for under-25 sources and
+    0.18 for over-40 sources, that's a story.
+    """
+    buckets: dict[str, list[Query]] = {}
+    for query in queries:
+        source, _, _ = query
+        buckets.setdefault(group_fn(source), []).append(query)
+
+    return {
+        label: evaluate_ranker(ranker, group_queries, k=k)
+        for label, group_queries in buckets.items()
+    }
+
+
+def age_band(profile: UserProfile) -> str:
+    """Coarse age buckets for subgroup analysis."""
+    if profile.age is None:
+        return "unknown"
+    if profile.age < 25:
+        return "<25"
+    if profile.age < 35:
+        return "25-34"
+    if profile.age < 50:
+        return "35-49"
+    return "50+"
+
+
+def mutual_friend_density_band(profile: UserProfile) -> str:
+    """How "socially-connected" the source profile is.
+
+    Cold-start (0 mutual friends in the candidate pool) is the bucket
+    where the ranker has the least to work with — worth measuring
+    separately so a high overall NDCG can't hide a weak cold-start lane.
+    """
+    n = len(profile.mutual_friend_ids)
+    if n == 0:
+        return "cold (0)"
+    if n <= 3:
+        return "sparse (1-3)"
+    if n <= 10:
+        return "warm (4-10)"
+    return "dense (11+)"
 
 
 def synthesize_relevance(source: UserProfile, candidate: UserProfile) -> bool:
@@ -222,10 +336,17 @@ def _stable_personality_vector(user_id: str, dims: int = 8) -> list[float]:
     """Deterministically map a user_id to a `dims`-length float vector.
 
     The vector is the same every call, so labels are reproducible across
-    train and evaluation. The mapping is unrelated to any observable
-    profile field — that is the point: it represents a "hidden trait"
-    the ranker has no access to, the way real user behaviour depends on
-    factors no feature captures (mood, time-of-day, prior history).
+    train and evaluation. The mapping is intentionally unrelated to any
+    observable profile field — it represents an *unobservable* trait the
+    ranker has no access to.
+
+    Caveat: this models "irreducible noise the ranker can't see," not a
+    realistic confounder correlated with the observable features. Real
+    user behaviour is a mix of both; once outcome data exists, a real
+    confounder model (e.g., latent persona inferred from past behaviour)
+    should replace this. Until then, the rules baseline gets to land
+    near, but never at, perfect NDCG against `make_simulated_outcome_fn`,
+    which is what we want as a synthetic stand-in.
     """
     digest = hashlib.sha256(user_id.encode("utf-8")).digest()
     # Each 4-byte chunk → one float in [-1.0, 1.0).
@@ -429,6 +550,64 @@ def make_rules_ranker(
     def ranker(source: UserProfile, candidates: list[UserProfile]) -> list[str]:
         ranked = rank_candidates(source, candidates, profile_embeddings=profile_embeddings)
         return [profile.user_id for profile, _ in ranked]
+
+    return ranker
+
+
+def make_mmr_reranker(
+    base_ranker: Ranker,
+    embeddings: Mapping[str, Vector],
+    lambda_relevance: float = 0.7,
+    top_n_pool: int = 50,
+) -> Ranker:
+    """Wrap `base_ranker` with a Maximal Marginal Relevance re-rank step.
+
+    MMR (Carbonell & Goldstein, 1998) trades relevance for diversity by
+    greedily picking the next candidate that maximizes:
+
+        lambda * relevance(c) - (1 - lambda) * max_sim(c, already_picked)
+
+    `lambda_relevance` is the dial: 1.0 = pure relevance (base ranker
+    unchanged), 0.0 = pure diversity. The base ranker's *ordering*
+    supplies the relevance score (top of the list = highest relevance).
+
+    `top_n_pool` bounds how deep MMR looks. Cheap because we only re-rank
+    the head of the base ranker's output.
+    """
+    from .embeddings import cosine_similarity
+
+    if not 0.0 <= lambda_relevance <= 1.0:
+        raise ValueError(f"lambda_relevance must be in [0, 1], got {lambda_relevance}")
+
+    def ranker(source: UserProfile, candidates: list[UserProfile]) -> list[str]:
+        base_order = base_ranker(source, candidates)
+        pool = base_order[:top_n_pool]
+        # Relevance score = 1.0 at the top, decaying linearly to 0.
+        n = len(pool)
+        relevance = {cid: 1.0 - (i / n) for i, cid in enumerate(pool)} if n else {}
+
+        picked: list[str] = []
+        remaining = [cid for cid in pool if cid in embeddings]
+        # Items without embeddings get appended at the end in base order.
+        no_vec = [cid for cid in pool if cid not in embeddings]
+        while remaining:
+            best_cid: str | None = None
+            best_score = float("-inf")
+            for cid in remaining:
+                if not picked:
+                    div_penalty = 0.0
+                else:
+                    div_penalty = max(
+                        cosine_similarity(embeddings[cid], embeddings[p]) for p in picked
+                    )
+                score = lambda_relevance * relevance[cid] - (1 - lambda_relevance) * div_penalty
+                if score > best_score:
+                    best_score = score
+                    best_cid = cid
+            assert best_cid is not None
+            picked.append(best_cid)
+            remaining.remove(best_cid)
+        return picked + no_vec + base_order[top_n_pool:]
 
     return ranker
 

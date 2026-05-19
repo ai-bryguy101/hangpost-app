@@ -258,6 +258,20 @@ def test_queries_from_verdicts_drops_unknown_profile_ids() -> None:
     assert relevant == {"c1"}
 
 
+def test_graded_gains_from_verdicts_uses_2_to_the_rating() -> None:
+    from hangpost_matching import graded_gains_from_verdicts
+
+    verdicts = {
+        ("s", "c0"): JudgeVerdict("s", "c0", 0, "", "stub"),
+        ("s", "c1"): JudgeVerdict("s", "c1", 1, "", "stub"),
+        ("s", "c2"): JudgeVerdict("s", "c2", 2, "", "stub"),
+        ("s", "c3"): JudgeVerdict("s", "c3", 3, "", "stub"),
+        ("s", "c4"): JudgeVerdict("s", "c4", 4, "", "stub"),
+    }
+    gains = graded_gains_from_verdicts(verdicts)
+    assert gains["s"] == {"c0": 0.0, "c1": 1.0, "c2": 3.0, "c3": 7.0, "c4": 15.0}
+
+
 def test_claude_judge_import_error_when_extra_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """ClaudeJudge must raise a helpful ImportError if anthropic is not installed."""
     import builtins

@@ -3,7 +3,7 @@
 [![CI](https://github.com/ai-bryguy101/hangpost-app/actions/workflows/ci.yml/badge.svg)](https://github.com/ai-bryguy101/hangpost-app/actions/workflows/ci.yml)
 [![Python 3.10 – 3.12](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/ai-bryguy101/hangpost-app/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Live demo on HuggingFace Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20demo-HuggingFace%20Space-yellow)](https://huggingface.co/spaces/REPLACE_ME/hangpost-matching-demo)
+[![Live demo on HuggingFace Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20demo-HuggingFace%20Space-yellow)](https://huggingface.co/spaces/YOUR_HF_USERNAME/hangpost-matching-demo)
 
 A friend-recommendation engine for a location-based social app. Three rankers
 behind one `Ranker` Protocol — each phase is measured against a held-out query
@@ -70,7 +70,12 @@ Try the engine in your browser — pick a source profile, see the top-10
 recommendations with a full per-candidate `MatchBreakdown` showing exactly
 why each one ranked where it did:
 
-**[hangpost-matching-demo on HuggingFace Spaces →](https://huggingface.co/spaces/REPLACE_ME/hangpost-matching-demo)**
+**[hangpost-matching-demo on HuggingFace Spaces →](https://huggingface.co/spaces/YOUR_HF_USERNAME/hangpost-matching-demo)**
+
+> Replace `YOUR_HF_USERNAME` above (and in the Space badge at the top of
+> this README) with your HuggingFace username once you've deployed the
+> Space — see [Deploying the demo](#deploying-the-demo-huggingface-spaces)
+> below for the one-time setup.
 
 The Space is built from [`space/`](space/) and re-installs the package
 straight from this repo at boot, so the demo never drifts from `main`.
@@ -247,6 +252,38 @@ The `rules_only` row pinning near 1.0 is the label-leakage tell —
 `rule_based` labels share their features with the rules ranker. Run with
 `--relevance simulated` to see realistic numbers; the full Phase 1 / 2 / 3
 comparison and plots live in `notebooks/02_evaluation.ipynb`.
+
+## Beyond accuracy: diversity, fairness, cold-start, latency
+
+A ranker that just maximises NDCG is half-finished. The repo also
+provides the metrics and re-rankers that real recommendation systems
+have to answer for:
+
+- **`evaluate_ranker_by_subgroup(ranker, queries, group_fn, k)`** —
+  partition queries by a property of the source profile (`age_band`,
+  `mutual_friend_density_band`, or your own) and report metrics per
+  group. Catches the case where overall NDCG looks fine but the ranker
+  silently underperforms for under-25s or cold-start users.
+- **`intra_list_diversity(retrieved, embeddings, k)`** — average
+  pairwise dissimilarity of the top-k embeddings. A relevance-only
+  ranker can quietly degenerate into "always show the same kind of
+  person"; this is how you measure that.
+- **`make_mmr_reranker(base, embeddings, lambda_relevance)`** —
+  Maximal Marginal Relevance re-rank step on top of any base ranker.
+  `lambda_relevance=1.0` preserves the base ordering; lower values
+  promote diversity. Use it to chart the relevance/diversity tradeoff
+  in `notebooks/02_evaluation.ipynb`.
+- **`rank_candidates_with_cold_start(...)`** — falls back to a
+  candidate-popularity prior when the source profile has too few
+  populated signals for the main ranker to work with, so brand-new
+  users see a populated, defensible list on day one.
+- **`ndcg_at_k_graded(retrieved, gains, k)`** + the optional Phase 3.5
+  graded-relevance path — uses the textbook `gain = 2**rating - 1` so
+  rating-4 candidates dominate rating-1 candidates, instead of
+  collapsing the 0-4 judge scale to a binary threshold.
+- **`scripts/bench.py`** — wall-clock benchmark with mean / p50 / p95
+  latency at varying candidate-pool sizes for every ranker. Output
+  shape is markdown-ready for `docs/BENCHMARKS.md`.
 
 ## Experiment tracking
 

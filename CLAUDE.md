@@ -139,5 +139,7 @@ experiment tracking, model/data cards, and CI.
 
 ## Branch policy
 
-- Active development branch: `claude/cool-cori-RgQiQ`
-- Never push to a different branch without explicit user permission.
+- Develop on a feature branch off `main`. The session prompt assigns the
+  specific branch name each run (e.g. `claude/cool-cori-XXXXX`).
+- Never push to a different branch (especially `main`) without explicit
+  user permission.
