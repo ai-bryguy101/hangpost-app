@@ -336,6 +336,21 @@ After the first push, future updates are one command:
 git subtree push --prefix=space hf main
 ```
 
+> **Important — pin `space/requirements.txt` to a commit SHA, not `@main`.**
+> HuggingFace caches the pip install, so if the requirements line is
+> `hangpost-matching @ git+https://github.com/.../hangpost-app@main` the
+> Space will keep running the version that was first installed even after
+> you push new code to `main`, producing `AttributeError`s when the demo
+> uses fields that only exist on the newer package. Update the SHA in
+> `space/requirements.txt` whenever you push package changes that the
+> demo depends on:
+>
+> ```bash
+> git rev-parse origin/main      # get the new SHA
+> # edit space/requirements.txt: replace the SHA after the `@`
+> git subtree push --prefix=space hf main
+> ```
+
 ## Test discipline
 
 Heavy ML dependencies (`numpy`, `sentence-transformers`, `lightgbm`,
