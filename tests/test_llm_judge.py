@@ -18,11 +18,13 @@ from hangpost_matching import (
     JudgeVerdict,
     LLMJudge,
     UserProfile,
+    agreement_report,
     append_verdict,
     judge_pairs,
     load_verdicts,
     pair_to_prompt,
     queries_from_verdicts,
+    sample_for_gold_pass,
 )
 
 
@@ -293,3 +295,159 @@ def test_claude_judge_import_error_when_extra_missing(monkeypatch: pytest.Monkey
 
     with pytest.raises(ImportError, match='".\\[judge]"'):
         ClaudeJudge()
+
+
+# ---------- inter-rater agreement (hybrid Haiku + Sonnet calibration) ----------
+
+
+def _verdict(sid: str, cid: str, rating: int, model: str = "stub") -> JudgeVerdict:
+    return JudgeVerdict(source_id=sid, candidate_id=cid, rating=rating, reasoning="", model=model)
+
+
+def test_agreement_report_perfect_agreement() -> None:
+    """When both raters agree on every pair, κ is 1.0 and all rates are 100%."""
+    bulk = {
+        ("s", "c0"): _verdict("s", "c0", 0),
+        ("s", "c1"): _verdict("s", "c1", 1),
+        ("s", "c2"): _verdict("s", "c2", 3),
+        ("s", "c3"): _verdict("s", "c3", 4),
+    }
+    gold = {key: _verdict(key[0], key[1], v.rating, model="gold") for key, v in bulk.items()}
+
+    report = agreement_report(bulk, gold)
+
+    assert report.n_overlap == 4
+    assert report.exact_agreement == 1.0
+    assert report.adjacent_agreement == 1.0
+    assert report.mean_absolute_difference == 0.0
+    assert report.quadratic_weighted_kappa == pytest.approx(1.0)
+
+
+def test_agreement_report_counts_disagreements() -> None:
+    """Exact / adjacent / MAD reflect off-diagonal mass in the confusion matrix."""
+    bulk = {
+        ("s", "c0"): _verdict("s", "c0", 0),
+        ("s", "c1"): _verdict("s", "c1", 2),
+        ("s", "c2"): _verdict("s", "c2", 4),
+        ("s", "c3"): _verdict("s", "c3", 3),
+    }
+    gold = {
+        # exact match
+        ("s", "c0"): _verdict("s", "c0", 0, model="gold"),
+        # off by 1 (adjacent)
+        ("s", "c1"): _verdict("s", "c1", 3, model="gold"),
+        # off by 4 (large disagreement)
+        ("s", "c2"): _verdict("s", "c2", 0, model="gold"),
+        # exact match
+        ("s", "c3"): _verdict("s", "c3", 3, model="gold"),
+    }
+
+    report = agreement_report(bulk, gold)
+
+    assert report.n_overlap == 4
+    # 2 of 4 exact matches.
+    assert report.exact_agreement == 0.5
+    # 3 of 4 within ±1 (c0, c1, c3); c2 is off by 4.
+    assert report.adjacent_agreement == 0.75
+    # mean of [0, 1, 4, 0] = 1.25
+    assert report.mean_absolute_difference == pytest.approx(1.25)
+    # κ should be in (0, 1) — better than chance, not perfect.
+    assert 0.0 < report.quadratic_weighted_kappa < 1.0
+
+
+def test_agreement_report_ignores_non_overlapping_pairs() -> None:
+    """Pairs unique to either map contribute nothing to the metrics."""
+    bulk = {
+        ("s", "c0"): _verdict("s", "c0", 2),
+        ("s", "c1"): _verdict("s", "c1", 3),
+        ("s", "only_in_bulk"): _verdict("s", "only_in_bulk", 0),
+    }
+    gold = {
+        ("s", "c0"): _verdict("s", "c0", 2, model="gold"),
+        ("s", "c1"): _verdict("s", "c1", 4, model="gold"),
+        ("s", "only_in_gold"): _verdict("s", "only_in_gold", 1, model="gold"),
+    }
+
+    report = agreement_report(bulk, gold)
+
+    # Only c0 and c1 overlap.
+    assert report.n_overlap == 2
+    assert report.exact_agreement == 0.5
+    assert report.adjacent_agreement == 1.0
+
+
+def test_agreement_report_empty_overlap_is_safe() -> None:
+    """Disjoint maps must not divide by zero."""
+    bulk = {("s", "c0"): _verdict("s", "c0", 2)}
+    gold = {("s", "c1"): _verdict("s", "c1", 3, model="gold")}
+
+    report = agreement_report(bulk, gold)
+
+    assert report.n_overlap == 0
+    assert report.exact_agreement == 0.0
+    assert report.adjacent_agreement == 0.0
+    assert report.mean_absolute_difference == 0.0
+    assert report.quadratic_weighted_kappa == 0.0
+
+
+def test_agreement_report_table_renders() -> None:
+    """`render_table` produces a markdown-friendly block with the headlines."""
+    bulk = {("s", f"c{i}"): _verdict("s", f"c{i}", i % 5) for i in range(10)}
+    gold = {key: _verdict(key[0], key[1], v.rating, model="gold") for key, v in bulk.items()}
+
+    rendered = agreement_report(bulk, gold).render_table()
+
+    assert "exact agreement" in rendered
+    assert "weighted κ" in rendered
+    # Confusion matrix has all 5 rating rows + the header / divider.
+    for r in range(5):
+        assert f"     {r:>2d}" in rendered
+
+
+def test_sample_for_gold_pass_is_deterministic() -> None:
+    """Same seed → same sampled key list, byte-for-byte."""
+    verdicts = {("s", f"c{i}"): _verdict("s", f"c{i}", i % 5) for i in range(60)}
+
+    first = sample_for_gold_pass(verdicts, n=20, seed=7)
+    second = sample_for_gold_pass(verdicts, n=20, seed=7)
+
+    assert first == second
+    assert len(first) == 20
+
+
+def test_sample_for_gold_pass_stratifies_evenly() -> None:
+    """Stratified sampling spreads picks across rating buckets."""
+    # 20 ratings per bucket — plenty of room for an even draw.
+    verdicts: dict[tuple[str, str], JudgeVerdict] = {}
+    for r in range(5):
+        for i in range(20):
+            verdicts[("s", f"r{r}_c{i}")] = _verdict("s", f"r{r}_c{i}", r)
+
+    sampled = sample_for_gold_pass(verdicts, n=25, seed=42, stratify_by_rating=True)
+
+    # 25 / 5 = 5 per bucket, evenly distributed.
+    counts = {r: 0 for r in range(5)}
+    for sid, cid in sampled:
+        counts[verdicts[(sid, cid)].rating] += 1
+    assert counts == {0: 5, 1: 5, 2: 5, 3: 5, 4: 5}
+
+
+def test_sample_for_gold_pass_returns_everything_when_n_exceeds_size() -> None:
+    """Asking for more pairs than exist returns the full key set."""
+    verdicts = {("s", f"c{i}"): _verdict("s", f"c{i}", i % 5) for i in range(7)}
+
+    sampled = sample_for_gold_pass(verdicts, n=100, seed=0)
+
+    assert sorted(sampled) == sorted(verdicts.keys())
+
+
+def test_sample_for_gold_pass_uniform_mode() -> None:
+    """`stratify_by_rating=False` falls back to uniform random sampling."""
+    verdicts = {("s", f"c{i}"): _verdict("s", f"c{i}", i % 5) for i in range(40)}
+
+    sampled = sample_for_gold_pass(verdicts, n=10, seed=1, stratify_by_rating=False)
+
+    assert len(sampled) == 10
+    # All keys must come from the input set, no duplicates.
+    assert all(key in verdicts for key in sampled)
+    assert len(set(sampled)) == len(sampled)

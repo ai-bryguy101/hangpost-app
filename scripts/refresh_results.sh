@@ -13,13 +13,17 @@
 #
 # Cost note
 # ---------
-# `scripts/label.py` calls Claude once per (source, candidate) pair.
-# Defaults below (--queries 30 --top-k 15 --random-k 15) bound this at
-# 30 * 30 = 900 calls. With Opus 4.7 the run is in the $5–20 range; rerun
-# with a cheaper model (e.g. `--model claude-haiku-4-5-20251001`) to
-# sanity-check the pipeline before paying for the Opus pass. The
-# verdicts file is append-only and idempotent, so re-running with new
-# queries only pays for the new pairs.
+# Defaults to a *hybrid two-model* labelling pattern:
+#   - Bulk pass: Haiku 4.5 with --no-thinking on ~900 pairs (≈$1-2)
+#   - Optional gold pass: Sonnet 4.6 with thinking on ~100 sampled pairs
+#     (≈$2-3) — produces inter-rater agreement metrics that quantify how
+#     much the cheap labels deviate from the strong ones. Off by default
+#     to keep the headline cheap; enable with `WITH_GOLD=1`.
+#
+# Total cost ranges from ~$1-2 (bulk only, default) to ~$3-5 (with gold
+# pass) to ~$100+ if you override BULK_MODEL=claude-opus-4-7 and leave
+# thinking on. Re-running is idempotent on both JSONL caches, so adding
+# queries only pays for new pairs.
 
 set -euo pipefail
 
@@ -27,11 +31,22 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 LABELS="${LABELS:-data/judge_labels.jsonl}"
+GOLD_LABELS="${GOLD_LABELS:-data/judge_labels_gold.jsonl}"
 MODEL="${MODEL:-models/learned_ranker.joblib}"
 BENCH_OUT="${BENCH_OUT:-docs/BENCHMARKS.md}"
+
+# Bulk pass — cheap, scaled.
+BULK_MODEL="${BULK_MODEL:-claude-haiku-4-5-20251001}"
+BULK_THINKING="${BULK_THINKING:-no}"      # "yes" or "no"
 QUERIES="${QUERIES:-30}"
 TOP_K="${TOP_K:-15}"
 RANDOM_K="${RANDOM_K:-15}"
+
+# Gold pass — small, calibrating. Off by default.
+WITH_GOLD="${WITH_GOLD:-0}"               # set to 1 to enable
+GOLD_MODEL="${GOLD_MODEL:-claude-sonnet-4-6}"
+GOLD_THINKING="${GOLD_THINKING:-yes}"     # "yes" or "no"
+GOLD_N="${GOLD_N:-100}"
 
 if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
     echo "ANTHROPIC_API_KEY is not set. Export it before running:"
@@ -39,20 +54,44 @@ if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
     exit 1
 fi
 
-echo "==> 1/4  Generating LLM-judge labels at $LABELS"
+bulk_thinking_flag=""
+if [[ "$BULK_THINKING" != "yes" ]]; then
+    bulk_thinking_flag="--no-thinking"
+fi
+
+gold_thinking_flag=""
+if [[ "$GOLD_THINKING" != "yes" ]]; then
+    gold_thinking_flag="--no-thinking"
+fi
+
+echo "==> 1/5  Bulk pass: $BULK_MODEL on up to $((QUERIES * (TOP_K + RANDOM_K))) pairs"
 python scripts/label.py \
+    --model "$BULK_MODEL" \
+    $bulk_thinking_flag \
     --queries "$QUERIES" \
     --top-k "$TOP_K" \
     --random-k "$RANDOM_K" \
     --out "$LABELS"
 
-echo "==> 2/4  Training LightGBM ranker on the judge labels"
+if [[ "$WITH_GOLD" == "1" ]]; then
+    echo "==> 2/5  Gold pass: $GOLD_MODEL on $GOLD_N sampled pairs"
+    python scripts/gold_label.py \
+        --bulk-labels "$LABELS" \
+        --gold-labels "$GOLD_LABELS" \
+        --n "$GOLD_N" \
+        --model "$GOLD_MODEL" \
+        $gold_thinking_flag
+else
+    echo "==> 2/5  Gold pass: skipped (set WITH_GOLD=1 to enable)"
+fi
+
+echo "==> 3/5  Training LightGBM ranker on the bulk labels"
 python scripts/train.py \
     --labels "$LABELS" \
     --with-embeddings \
     --out "$MODEL"
 
-echo "==> 3/4  Running latency benchmark at sizes 10/100/500/1000"
+echo "==> 4/5  Running latency benchmark at sizes 10/100/500/1000"
 {
     echo "# Benchmarks"
     echo
@@ -67,7 +106,7 @@ echo "==> 3/4  Running latency benchmark at sizes 10/100/500/1000"
     echo '```'
 } > "$BENCH_OUT"
 
-echo "==> 4/4  Regenerating SVG plots (simulated + LLM-judge)"
+echo "==> 5/5  Regenerating SVG plots (simulated + LLM-judge)"
 # Synthetic ceiling — overwrites the default chart.
 python scripts/make_plots.py \
     --with-embeddings \
@@ -82,5 +121,9 @@ python scripts/make_plots.py \
 
 echo
 echo "Done. Now commit:"
-echo "  git add $LABELS $BENCH_OUT docs/img/"
+if [[ "$WITH_GOLD" == "1" ]]; then
+    echo "  git add $LABELS $GOLD_LABELS $BENCH_OUT docs/img/"
+else
+    echo "  git add $LABELS $BENCH_OUT docs/img/"
+fi
 echo "  git commit -m 'Refresh results from LLM-judge labels'"
