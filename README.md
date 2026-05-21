@@ -38,6 +38,30 @@ which implements precision@k / recall@k / NDCG@k / MAP@k from scratch.
 > (1,000 synthetic profiles, 100 queries, seed=42). Regenerate any time the
 > ranker changes and the README stays in sync.
 
+### Phase 1 vs Phase 2 vs Phase 3
+
+![NDCG@10 by ranker phase](docs/img/phase_comparison.svg)
+
+Every phase evaluated by the same harness on the same held-out queries.
+By default the chart uses the `simulated` labels (realistic ceiling — a
+hidden per-user personality vector keeps either ranker from saturating).
+With `--labels data/judge_labels.jsonl` the same chart is regenerated
+against Claude-as-judge labels — the "teacher" verdicts the Phase 3
+LightGBM ranker is distilled from. **Phase 2 and Phase 3 bars only
+appear when the `[ml]` extra is installed and `--learned-model` /
+`--with-embeddings` are passed** — without them the chart still renders
+the random + Phase 1 comparison so the README is never broken.
+
+```bash
+# Default (synthetic ceiling)
+python scripts/make_plots.py --with-embeddings \
+    --learned-model models/learned_ranker.joblib
+
+# Against LLM-judge labels (Phase 3.5 teacher → student story)
+python scripts/make_plots.py --labels data/judge_labels.jsonl \
+    --with-embeddings --learned-model models/learned_ranker.joblib
+```
+
 ### Rules vs random across three label sets
 
 ![NDCG@10 by label set — rules vs random](docs/img/ndcg_by_label_set.svg)
@@ -117,6 +141,21 @@ python scripts/evaluate.py --labels data/judge_labels.jsonl
 # Distill: train LightGBM on the judge's labels.
 python scripts/train.py --labels data/judge_labels.jsonl --with-embeddings
 ```
+
+Or run the full label → train → benchmark → re-plot pipeline in one shot:
+
+```bash
+pip install -e ".[ml,judge]"
+export ANTHROPIC_API_KEY=...
+./scripts/refresh_results.sh
+```
+
+`refresh_results.sh` generates fresh LLM-judge labels, trains a
+LightGBM ranker on them, writes a benchmark snapshot into
+`docs/BENCHMARKS.md`, and regenerates every SVG the README inlines —
+including the phase-comparison chart evaluated against the judge's
+labels. Re-runs are idempotent (the verdicts JSONL is append-only) so
+adding queries only pays the API cost for the new pairs.
 
 To deploy as an HTTP service:
 
