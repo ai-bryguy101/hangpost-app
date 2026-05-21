@@ -44,15 +44,19 @@ from .llm_judge import (
 from .llm_judge import (
     DEFAULT_RELEVANCE_THRESHOLD,
     JUDGE_SYSTEM_PROMPT,
+    RATING_LEVELS,
+    AgreementReport,
     ClaudeJudge,
     JudgeVerdict,
     LLMJudge,
+    agreement_report,
     append_verdict,
     graded_gains_from_verdicts,
     judge_pairs,
     load_verdicts,
     pair_to_prompt,
     queries_from_verdicts,
+    sample_for_gold_pass,
 )
 from .models import MatchBreakdown, ScoringWeights, UserProfile
 from .scoring import (
@@ -70,8 +74,10 @@ __all__ = [
     "FEATURE_NAMES",
     "JUDGE_DEFAULT_MODEL",
     "JUDGE_SYSTEM_PROMPT",
+    "RATING_LEVELS",
     "RELEVANCE_GENERATORS",
     "AblationRow",
+    "AgreementReport",
     "ClaudeJudge",
     "Embedder",
     "EvaluationResult",
@@ -88,6 +94,7 @@ __all__ = [
     "Vector",
     "ablate_weights",
     "age_band",
+    "agreement_report",
     "append_verdict",
     "average_precision_at_k",
     "build_queries",
@@ -119,6 +126,7 @@ __all__ = [
     "rank_candidates",
     "rank_candidates_with_cold_start",
     "recall_at_k",
+    "sample_for_gold_pass",
     "split_queries",
     "synthesize_relevance",
 ]

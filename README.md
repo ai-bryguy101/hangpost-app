@@ -38,6 +38,30 @@ which implements precision@k / recall@k / NDCG@k / MAP@k from scratch.
 > (1,000 synthetic profiles, 100 queries, seed=42). Regenerate any time the
 > ranker changes and the README stays in sync.
 
+### Phase 1 vs Phase 2 vs Phase 3
+
+![NDCG@10 by ranker phase](docs/img/phase_comparison.svg)
+
+Every phase evaluated by the same harness on the same held-out queries.
+By default the chart uses the `simulated` labels (realistic ceiling — a
+hidden per-user personality vector keeps either ranker from saturating).
+With `--labels data/judge_labels.jsonl` the same chart is regenerated
+against Claude-as-judge labels — the "teacher" verdicts the Phase 3
+LightGBM ranker is distilled from. **Phase 2 and Phase 3 bars only
+appear when the `[ml]` extra is installed and `--learned-model` /
+`--with-embeddings` are passed** — without them the chart still renders
+the random + Phase 1 comparison so the README is never broken.
+
+```bash
+# Default (synthetic ceiling)
+python scripts/make_plots.py --with-embeddings \
+    --learned-model models/learned_ranker.joblib
+
+# Against LLM-judge labels (Phase 3.5 teacher → student story)
+python scripts/make_plots.py --labels data/judge_labels.jsonl \
+    --with-embeddings --learned-model models/learned_ranker.joblib
+```
+
 ### Rules vs random across three label sets
 
 ![NDCG@10 by label set — rules vs random](docs/img/ndcg_by_label_set.svg)
@@ -107,9 +131,11 @@ To label and distill with Claude as the teacher (Phase 3.5):
 pip install -e ".[ml,judge]"
 export ANTHROPIC_API_KEY=...
 
-# Send pairs to Claude, cache verdicts to JSONL (idempotent — re-runs only
-# call the API for new pairs):
-python scripts/label.py --queries 30 --top-k 15 --random-k 15
+# Bulk pass — Haiku 4.5 with thinking off is the cheap default
+# (~$1-2 for the full 900-pair set). Use `--model claude-opus-4-7` to
+# crank up label quality at much higher cost.
+python scripts/label.py --queries 30 --top-k 15 --random-k 15 \
+    --model claude-haiku-4-5-20251001 --no-thinking
 
 # Evaluate every ranker against the judge's labels:
 python scripts/evaluate.py --labels data/judge_labels.jsonl
@@ -117,6 +143,44 @@ python scripts/evaluate.py --labels data/judge_labels.jsonl
 # Distill: train LightGBM on the judge's labels.
 python scripts/train.py --labels data/judge_labels.jsonl --with-embeddings
 ```
+
+**Hybrid two-model calibration (optional, ~$3-5 extra).** Bulk
+labelling with Haiku is cheap but noisy. To quantify how much, re-judge
+a small stratified subset of the same pairs with Sonnet 4.6 — the
+"second opinion" — and read off the inter-rater agreement:
+
+```bash
+python scripts/gold_label.py --n 100      # ~$2-3
+# Prints exact agreement %, adjacent (±1) %, mean |Δrating|, and
+# quadratic-weighted Cohen's κ between bulk and gold ratings.
+```
+
+Why **Sonnet** as the gold model (not Opus): on a tight 0-4 rubric task
+the capability gap between Sonnet and Opus is small, the cost is ~5×
+lower, and Sonnet sits closer to Haiku on the capability ladder — so
+disagreements between Haiku and Sonnet are more interpretable as
+*real* rating-quality issues, not "the stronger model just thought
+longer."
+
+Or run the full label → (optional gold) → train → benchmark → re-plot
+pipeline in one shot:
+
+```bash
+pip install -e ".[ml,judge]"
+export ANTHROPIC_API_KEY=...
+./scripts/refresh_results.sh                   # bulk only (~$1-2)
+WITH_GOLD=1 ./scripts/refresh_results.sh       # add Sonnet gold pass (~$3-5)
+```
+
+`refresh_results.sh` generates fresh LLM-judge labels, trains a
+LightGBM ranker on them, writes a benchmark snapshot into
+`docs/BENCHMARKS.md`, and regenerates every SVG the README inlines —
+including the phase-comparison chart evaluated against the judge's
+labels. Re-runs are idempotent (the verdicts JSONL is append-only) so
+adding queries only pays the API cost for the new pairs. Override
+`BULK_MODEL`, `BULK_THINKING`, `GOLD_MODEL`, `GOLD_THINKING`, `GOLD_N`,
+`QUERIES`, `TOP_K`, and `RANDOM_K` via env vars to dial in cost vs.
+label quality.
 
 To deploy as an HTTP service:
 

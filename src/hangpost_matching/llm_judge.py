@@ -406,3 +406,200 @@ def graded_gains_from_verdicts(
     for (sid, cid), verdict in verdicts.items():
         out.setdefault(sid, {})[cid] = float(2**verdict.rating - 1)
     return out
+
+
+# ---------- inter-rater agreement (hybrid Haiku + Sonnet calibration) ----------
+#
+# In the two-model labelling pattern, Haiku rates the bulk pairs cheaply
+# and Sonnet re-rates a small "gold" subset of the same pairs. These
+# helpers quantify how well the two raters agree on the overlap, so a
+# disagreement isn't just a hunch — it's a number you can put in a
+# README. We track four flavours of agreement because no single one
+# tells the whole story for ordinal ratings:
+#
+#   - exact agreement %        — strict; useful headline
+#   - adjacent agreement %     — forgiving of "is this a 2 or a 3" calls
+#   - mean absolute difference — magnitude, not just count, of disagreements
+#   - quadratic-weighted κ     — chance-corrected; the standard for ordinal data
+
+
+# Rating scale is fixed by JUDGE_SYSTEM_PROMPT: integers in [0, 4].
+RATING_LEVELS: tuple[int, ...] = (0, 1, 2, 3, 4)
+
+
+@dataclass(frozen=True)
+class AgreementReport:
+    """Pairwise inter-rater agreement summary.
+
+    `confusion[i][j]` is the count of pairs the *bulk* labeller rated `i`
+    and the *gold* labeller rated `j`. The off-diagonal mass is the
+    disagreement.
+    """
+
+    n_overlap: int
+    exact_agreement: float  # fraction in [0, 1]
+    adjacent_agreement: float  # fraction within ±1
+    mean_absolute_difference: float
+    quadratic_weighted_kappa: float
+    confusion: list[list[int]]  # [bulk_rating][gold_rating]
+
+    def render_table(self) -> str:
+        """Return a markdown-ready confusion matrix + headline metrics."""
+        header = "       gold→  " + "  ".join(f"{j:>3d}" for j in RATING_LEVELS)
+        rows = [header, "  bulk↓  " + "-" * (5 * len(RATING_LEVELS) + 4)]
+        for i in RATING_LEVELS:
+            row_cells = "  ".join(f"{self.confusion[i][j]:>3d}" for j in RATING_LEVELS)
+            rows.append(f"     {i:>2d}     {row_cells}")
+        rows.append("")
+        rows.append(f"  n (overlap)         : {self.n_overlap}")
+        rows.append(f"  exact agreement     : {self.exact_agreement:.1%}")
+        rows.append(f"  adjacent (±1) agree : {self.adjacent_agreement:.1%}")
+        rows.append(f"  mean |Δrating|      : {self.mean_absolute_difference:.2f}")
+        rows.append(f"  weighted κ (quad.)  : {self.quadratic_weighted_kappa:.3f}")
+        return "\n".join(rows)
+
+
+def _quadratic_weighted_kappa(confusion: list[list[int]]) -> float:
+    """Quadratic-weighted Cohen's κ on a 5x5 confusion matrix.
+
+    Formula:
+        w_ij = (i - j)^2 / (k - 1)^2          (k = number of categories)
+        κ    = 1 - (Σ w_ij O_ij) / (Σ w_ij E_ij)
+
+    Where O_ij is the observed count and E_ij is the expected count under
+    independence of the two raters' marginals. Quadratic weights penalise
+    "1 vs 4" disagreements much more harshly than "2 vs 3", which is the
+    right shape for an ordinal friendship-rating scale.
+
+    Returns 1.0 when both raters agree exactly on every pair, 0.0 when
+    agreement is at chance, and a negative value when the raters disagree
+    *more* than chance would predict.
+    """
+    k = len(RATING_LEVELS)
+    total = sum(sum(row) for row in confusion)
+    if total == 0:
+        return 0.0
+
+    # Marginals.
+    row_totals = [sum(confusion[i]) for i in range(k)]
+    col_totals = [sum(confusion[i][j] for i in range(k)) for j in range(k)]
+
+    # Weighted observed and expected disagreement.
+    denom = (k - 1) ** 2
+    num = 0.0
+    den = 0.0
+    for i in range(k):
+        for j in range(k):
+            w = (i - j) ** 2 / denom
+            observed = confusion[i][j]
+            expected = row_totals[i] * col_totals[j] / total
+            num += w * observed
+            den += w * expected
+
+    if den == 0.0:
+        # Degenerate case: one rater put every pair in the same bucket.
+        # κ is undefined; report 0.0 (no information about agreement).
+        return 0.0
+    return 1.0 - num / den
+
+
+def agreement_report(
+    bulk: Mapping[tuple[str, str], JudgeVerdict],
+    gold: Mapping[tuple[str, str], JudgeVerdict],
+) -> AgreementReport:
+    """Compute inter-rater agreement on the pairs labelled by *both* sets.
+
+    Only pairs present in both `bulk` and `gold` contribute. Pairs unique
+    to either map are silently ignored — they carry no agreement signal.
+    """
+    k = len(RATING_LEVELS)
+    confusion = [[0 for _ in range(k)] for _ in range(k)]
+    abs_diffs: list[int] = []
+
+    for key, bulk_verdict in bulk.items():
+        gold_verdict = gold.get(key)
+        if gold_verdict is None:
+            continue
+        b = bulk_verdict.rating
+        g = gold_verdict.rating
+        # Defensive — JudgeVerdict.rating is typed int but a malformed
+        # JSONL could carry an out-of-range value.
+        if b not in RATING_LEVELS or g not in RATING_LEVELS:
+            continue
+        confusion[b][g] += 1
+        abs_diffs.append(abs(b - g))
+
+    n = len(abs_diffs)
+    if n == 0:
+        return AgreementReport(
+            n_overlap=0,
+            exact_agreement=0.0,
+            adjacent_agreement=0.0,
+            mean_absolute_difference=0.0,
+            quadratic_weighted_kappa=0.0,
+            confusion=confusion,
+        )
+
+    exact = sum(1 for d in abs_diffs if d == 0) / n
+    adjacent = sum(1 for d in abs_diffs if d <= 1) / n
+    mad = sum(abs_diffs) / n
+    qwk = _quadratic_weighted_kappa(confusion)
+    return AgreementReport(
+        n_overlap=n,
+        exact_agreement=exact,
+        adjacent_agreement=adjacent,
+        mean_absolute_difference=mad,
+        quadratic_weighted_kappa=qwk,
+        confusion=confusion,
+    )
+
+
+def sample_for_gold_pass(
+    verdicts: Mapping[tuple[str, str], JudgeVerdict],
+    n: int,
+    seed: int = 42,
+    stratify_by_rating: bool = True,
+) -> list[tuple[str, str]]:
+    """Pick `n` (source_id, candidate_id) keys to re-judge in the gold pass.
+
+    With `stratify_by_rating=True` (the default), the sample is balanced
+    across the five rating buckets so the agreement metrics aren't
+    dominated by whatever rating Haiku happened to assign most often
+    (typically 0s and 1s on a sparse-friendship dataset). With it off,
+    the sample is uniform random over all keys.
+
+    Deterministic given `seed`. Returns at most `min(n, len(verdicts))`
+    keys.
+    """
+    import random as _random
+
+    rng = _random.Random(seed)
+    all_keys = list(verdicts.keys())
+    if n >= len(all_keys):
+        return sorted(all_keys)  # take everything, deterministic order
+
+    if not stratify_by_rating:
+        rng.shuffle(all_keys)
+        return all_keys[:n]
+
+    by_rating: dict[int, list[tuple[str, str]]] = {r: [] for r in RATING_LEVELS}
+    for key, verdict in verdicts.items():
+        if verdict.rating in by_rating:
+            by_rating[verdict.rating].append(key)
+
+    # How many slots per bucket? Distribute evenly, then top up from the
+    # largest buckets to handle remainders.
+    per_bucket, remainder = divmod(n, len(RATING_LEVELS))
+    chosen: list[tuple[str, str]] = []
+    leftovers: list[tuple[str, str]] = []
+    for r in RATING_LEVELS:
+        bucket = list(by_rating[r])
+        rng.shuffle(bucket)
+        take = min(per_bucket, len(bucket))
+        chosen.extend(bucket[:take])
+        leftovers.extend(bucket[take:])
+
+    rng.shuffle(leftovers)
+    chosen.extend(leftovers[:remainder])
+    # Sort for stable ordering across re-runs at the same seed.
+    return sorted(chosen)
