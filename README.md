@@ -3,7 +3,7 @@
 [![CI](https://github.com/ai-bryguy101/hangpost-app/actions/workflows/ci.yml/badge.svg)](https://github.com/ai-bryguy101/hangpost-app/actions/workflows/ci.yml)
 [![Python 3.10 – 3.12](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/ai-bryguy101/hangpost-app/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Live demo on HuggingFace Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20demo-HuggingFace%20Space-yellow)](https://huggingface.co/spaces/YOUR_HF_USERNAME/hangpost-matching-demo)
+[![Live demo on HuggingFace Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20demo-HuggingFace%20Space-yellow)](https://huggingface.co/spaces/thisaiguybry/hangpost)
 
 A friend-recommendation engine for a location-based social app. Three rankers
 behind one `Ranker` Protocol — each phase is measured against a held-out query
@@ -94,15 +94,11 @@ Try the engine in your browser — pick a source profile, see the top-10
 recommendations with a full per-candidate `MatchBreakdown` showing exactly
 why each one ranked where it did:
 
-**[hangpost-matching-demo on HuggingFace Spaces →](https://huggingface.co/spaces/YOUR_HF_USERNAME/hangpost-matching-demo)**
-
-> Replace `YOUR_HF_USERNAME` above (and in the Space badge at the top of
-> this README) with your HuggingFace username once you've deployed the
-> Space — see [Deploying the demo](#deploying-the-demo-huggingface-spaces)
-> below for the one-time setup.
+**[hangpost on HuggingFace Spaces →](https://huggingface.co/spaces/thisaiguybry/hangpost)**
 
 The Space is built from [`space/`](space/) and re-installs the package
-straight from this repo at boot, so the demo never drifts from `main`.
+straight from this repo at boot (pinned to a commit SHA so the demo
+never silently drifts from a known-good revision).
 
 ## Quickstart
 
@@ -382,23 +378,38 @@ copied in so the demo works without external storage.
 To deploy (one-time setup):
 
 ```bash
-# 1. Create a new Space on https://huggingface.co/new-space
+# 1. Create the Space on https://huggingface.co/new-space
+#    Owner: <your-hf-username> · Name: hangpost
 #    SDK: Gradio · Hardware: CPU basic (free tier is fine)
 
-# 2. Add the new Space as a git remote and push the space/ subtree.
-huggingface-cli login                          # one-time, paste your HF token
-git remote add hf https://huggingface.co/spaces/<your-username>/hangpost-matching-demo
-git subtree push --prefix=space hf main
+# 2. Install the HF CLI (Codespaces / clean envs don't ship it).
+pip install -U "huggingface_hub[cli]"
 
-# 3. Replace REPLACE_ME in the badges/links at the top of README.md with
-#    your HuggingFace username.
+# 3. Log in. Create a write-scoped token at
+#    https://huggingface.co/settings/tokens and paste it when prompted.
+hf auth login
+
+# 4. Clone the Space repo, copy in space/, commit, push.
+SPACE=https://huggingface.co/spaces/<your-hf-username>/hangpost
+git clone "$SPACE" /tmp/hangpost-space
+cp -a space/. /tmp/hangpost-space/
+cd /tmp/hangpost-space
+git add -A
+git commit -m "Deploy Hangpost demo"
+git push
 ```
 
-After the first push, future updates are one command:
+After the first deploy, future updates are: edit `space/`, then re-copy
+and push:
 
 ```bash
-git subtree push --prefix=space hf main
+cp -a space/. /tmp/hangpost-space/
+cd /tmp/hangpost-space && git add -A && git commit -m "Update demo" && git push
 ```
+
+> Note: we avoid `git subtree push` here because plain Codespaces /
+> dev-container images don't ship `git subtree` or `huggingface-cli`
+> by default, and a plain clone-and-push works everywhere.
 
 > **Important — pin `space/requirements.txt` to a commit SHA, not `@main`.**
 > HuggingFace caches the pip install, so if the requirements line is

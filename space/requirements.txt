@@ -1,2 +1,2 @@
 gradio>=5.0,<6.0
-hangpost-matching @ git+https://github.com/ai-bryguy101/hangpost-app@2b9bf468eaa8a34135c493a2899268ab77aa7125
+hangpost-matching @ git+https://github.com/ai-bryguy101/hangpost-app@8c098c68b71c0fc0f99704f7645ddcfaf4d2799a

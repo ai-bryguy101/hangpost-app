@@ -40,6 +40,13 @@ from .scoring import compute_match_score, rank_candidates
 
 Mode = Literal["rules", "embeddings", "learned"]
 
+# Hard upper bound on candidates per request. The ranker itself is O(N) in
+# candidates, but `embeddings` and `learned` modes do per-request embedding
+# work that scales linearly too — a single very large payload could tie up
+# a worker for a long time. Override via HANGPOST_MAX_CANDIDATES if your
+# upstream retrieval layer already caps pool size differently.
+DEFAULT_MAX_CANDIDATES = 1000
+
 
 # ---------- wire types ----------
 
@@ -104,6 +111,7 @@ class _State:
     mode: Mode = "rules"
     embedder: Embedder | None = None
     learned_model: Predictor | None = None
+    max_candidates: int = DEFAULT_MAX_CANDIDATES
 
     candidates_seen: int = field(default=0)
     requests_seen: int = field(default=0)
@@ -117,7 +125,10 @@ def _resolve_mode(value: str) -> Mode:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    state = _State(mode=_resolve_mode(os.environ.get("HANGPOST_MODE", "rules")))
+    state = _State(
+        mode=_resolve_mode(os.environ.get("HANGPOST_MODE", "rules")),
+        max_candidates=int(os.environ.get("HANGPOST_MAX_CANDIDATES", DEFAULT_MAX_CANDIDATES)),
+    )
 
     if state.mode in ("embeddings", "learned"):
         from .embeddings import SentenceTransformerEmbedder
@@ -200,6 +211,16 @@ def rank(req: RankRequest) -> RankResponse:
 
     if not req.candidates:
         return RankResponse(mode=state.mode, results=[])
+
+    if len(req.candidates) > state.max_candidates:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Too many candidates ({len(req.candidates)} > "
+                f"{state.max_candidates}). Pre-filter upstream or raise "
+                f"HANGPOST_MAX_CANDIDATES."
+            ),
+        )
 
     source = req.source.to_profile()
     candidates = [c.to_profile() for c in req.candidates]
