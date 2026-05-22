@@ -76,5 +76,6 @@ module = [
     "uvicorn", "uvicorn.*",
     "mlflow", "mlflow.*",
     "anthropic", "anthropic.*",
+    "pandas", "pandas.*",
 ]
 ignore_missing_imports = true
