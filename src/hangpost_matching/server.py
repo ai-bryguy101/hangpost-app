@@ -13,12 +13,32 @@ Three modes selectable at startup via env vars:
     HANGPOST_LEARNED_MODEL_PATH  — path to a saved LearnedRanker
                                    (only used when mode="learned";
                                    default "models/learned_ranker.joblib")
+    HANGPOST_MAX_CANDIDATES      — hard cap on the number of candidates
+                                   per /rank request, to prevent a single
+                                   oversized payload from pinning a worker.
+                                   Default 1000.
 
 The endpoint signature is intentionally tiny:
 
     POST /rank      — rank a list of candidates for one source profile
     GET  /healthz   — liveness probe
     GET  /          — describe the active mode
+
+Production hardening notes
+--------------------------
+This is the matching engine deployed as a service — NOT a production-ready
+endpoint by itself. Before fronting it on the public internet, you should
+add:
+
+    - Authentication (API key header, JWT, or an upstream proxy with auth).
+    - Rate limiting (per-IP and per-key; see `slowapi` for FastAPI).
+    - CORS allowlist if a browser frontend calls /rank
+      (`from fastapi.middleware.cors import CORSMiddleware`).
+    - TLS termination — the included Dockerfile ships HTTP on port 8000.
+
+These are deliberately left out of the package so the deployment surface
+stays minimal and the operator can pick the right primitives for their
+environment. See `SECURITY.md` for the full caveat list.
 """
 
 from __future__ import annotations
