@@ -26,6 +26,8 @@ terms, profile age in app, time-of-day) is a matter of extending
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -74,6 +76,9 @@ def extract_features(
     ]
 
 
+ModelArrayLike = Sequence[Sequence[float]] | Any
+
+
 class Predictor(Protocol):
     """Anything with a `predict(X) -> Sequence[float]` method.
 
@@ -81,7 +86,7 @@ class Predictor(Protocol):
     that satisfy the same shape so they don't need lightgbm installed.
     """
 
-    def predict(self, x: Sequence[Sequence[float]]) -> Sequence[float]: ...
+    def predict(self, x: ModelArrayLike) -> Sequence[float]: ...
 
 
 class LearnedRanker:
@@ -180,13 +185,21 @@ class LearnedRanker:
         # name check passes silently. Importing pandas lazily keeps the [dev]
         # install untouched — only [ml] consumers ever hit this code path.
         x_frame: Any
+        x_for_predict: ModelArrayLike = feature_matrix
         try:
             import pandas as pd
 
             x_frame = pd.DataFrame(feature_matrix, columns=list(FEATURE_NAMES))
+            if hasattr(self._model, "feature_name_"):
+                x_for_predict = x_frame
         except ImportError:
-            x_frame = feature_matrix
-        scores = self._model.predict(x_frame)
+            pass
+        scores = self._model.predict(x_for_predict)
+        if len(scores) != len(candidates):
+            raise ValueError(
+                "Predictor returned a score count that does not match candidates: "
+                f"{len(scores)} != {len(candidates)}"
+            )
         ranked = sorted(
             zip(candidates, scores, strict=True),
             key=lambda pair: pair[1],
@@ -209,13 +222,23 @@ class LearnedRanker:
         if self._model is None:
             raise RuntimeError("Cannot save a LearnedRanker that has not been fit.")
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(
-            {"model": self._model, "profile_embeddings": self.profile_embeddings},
-            path,
-        )
+        payload = {
+            "signature": self.MODEL_SIGNATURE,
+            "payload_version": self.MODEL_PAYLOAD_VERSION,
+            "model": self._model,
+            "profile_embeddings": self.profile_embeddings,
+        }
+        joblib.dump(payload, path)
+        self._write_checksum(path)
 
     @classmethod
-    def load(cls, path: str | Path) -> LearnedRanker:
+    def load(
+        cls,
+        path: str | Path,
+        *,
+        allowed_dir: str | Path = "models",
+        verify_checksum: bool = True,
+    ) -> LearnedRanker:
         """Load a model + embedding map saved by `save`."""
         try:
             import joblib
@@ -223,8 +246,53 @@ class LearnedRanker:
             raise ImportError(
                 'joblib is required to load a LearnedRanker. Install with: pip install -e ".[ml]"'
             ) from exc
-        payload = joblib.load(path)
+        model_path = Path(path).resolve()
+        allowed_root = Path(allowed_dir).resolve()
+        if allowed_root not in model_path.parents and model_path != allowed_root:
+            raise ValueError(
+                f"Refusing to load model outside allowlisted directory: {allowed_root}"
+            )
+        if verify_checksum:
+            cls._verify_checksum(model_path)
+        payload = joblib.load(model_path)
+        if payload.get("signature") != cls.MODEL_SIGNATURE:
+            raise ValueError("Model payload signature mismatch.")
+        if payload.get("payload_version") != cls.MODEL_PAYLOAD_VERSION:
+            raise ValueError("Model payload version mismatch.")
         return cls(
             profile_embeddings=payload["profile_embeddings"],
             model=payload["model"],
         )
+
+    @classmethod
+    def _manifest_path(cls, model_path: Path) -> Path:
+        return model_path.with_suffix(f"{model_path.suffix}.sha256.json")
+
+    @classmethod
+    def _write_checksum(cls, model_path: str | Path) -> None:
+        path = Path(model_path)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        manifest = {
+            "signature": cls.MODEL_SIGNATURE,
+            "payload_version": cls.MODEL_PAYLOAD_VERSION,
+            "sha256": digest,
+            "filename": path.name,
+        }
+        cls._manifest_path(path).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    @classmethod
+    def _verify_checksum(cls, model_path: Path) -> None:
+        manifest_path = cls._manifest_path(model_path)
+        if not manifest_path.exists():
+            raise ValueError(f"Missing checksum manifest: {manifest_path}")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("signature") != cls.MODEL_SIGNATURE:
+            raise ValueError("Manifest signature mismatch.")
+        if manifest.get("payload_version") != cls.MODEL_PAYLOAD_VERSION:
+            raise ValueError("Manifest payload version mismatch.")
+        expected = manifest.get("sha256")
+        actual = hashlib.sha256(model_path.read_bytes()).hexdigest()
+        if expected != actual:
+            raise ValueError("Model checksum verification failed.")
+    MODEL_PAYLOAD_VERSION = 1
+    MODEL_SIGNATURE = "hangpost_learned_ranker"
