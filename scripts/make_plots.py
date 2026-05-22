@@ -393,6 +393,7 @@ def _collect_phase_comparison(
     with_embeddings: bool,
     learned_model_path: Path | None,
     labels_path: Path | None,
+    label_threshold: int | None = None,
 ) -> tuple[dict[str, float], str]:
     """Run every available ranker on the chosen label set and collect NDCG@k.
 
@@ -408,9 +409,12 @@ def _collect_phase_comparison(
             raise SystemExit(
                 f"--labels {labels_path} contains no verdicts. Run scripts/label.py first."
             )
-        queries = queries_from_verdicts(profiles, verdicts)
+        from hangpost_matching import DEFAULT_RELEVANCE_THRESHOLD
+
+        threshold = label_threshold if label_threshold is not None else DEFAULT_RELEVANCE_THRESHOLD
+        queries = queries_from_verdicts(profiles, verdicts, threshold=threshold)
         queries = [q for q in queries if q[2]]
-        label_name = f"LLM-judge labels ({labels_path.name})"
+        label_name = f"LLM-judge labels ({labels_path.name}, rating≥{threshold})"
     else:
         relevance_fn = get_relevance_fn("simulated", seed)
         queries = build_queries(profiles, queries_n, seed, relevance_fn=relevance_fn)
@@ -597,6 +601,16 @@ def _parse_args() -> argparse.Namespace:
             "chart is evaluated against these labels instead of `simulated`."
         ),
     )
+    parser.add_argument(
+        "--label-threshold",
+        type=int,
+        default=None,
+        help=(
+            "Minimum judge rating (0-4) to count as relevant when --labels is "
+            "set. Defaults to the package default (3). Use 4 for strict "
+            "'strong match only' grading."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -625,6 +639,7 @@ def main() -> None:
         with_embeddings=args.with_embeddings,
         learned_model_path=args.learned_model,
         labels_path=args.labels,
+        label_threshold=args.label_threshold,
     )
     plot_phase_comparison(scores, args.k, label_name, OUT_DIR / "phase_comparison.svg")
 
