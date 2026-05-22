@@ -1,2 +1,2 @@
-gradio>=5.0,<6.0
+gradio>=6.14.0,<7.0
 hangpost-matching @ git+https://github.com/ai-bryguy101/hangpost-app@8c098c68b71c0fc0f99704f7645ddcfaf4d2799a
