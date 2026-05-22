@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from .embeddings import Vector
 from .evaluation import Query, Ranker
@@ -156,7 +156,13 @@ class LearnedRanker:
         }
         defaults.update(lgbm_params)
         model = LGBMRanker(**defaults)
-        model.fit(feature_matrix, labels, group=groups)
+        # Wrap features in a DataFrame so the model is fit with named columns;
+        # predict() then receives DataFrames with the same columns and sklearn
+        # stops complaining about feature-name mismatches.
+        import pandas as pd
+
+        x_frame: Any = pd.DataFrame(feature_matrix, columns=list(FEATURE_NAMES))
+        model.fit(x_frame, labels, group=groups)
         self._model = model
 
     def rank(self, source: UserProfile, candidates: list[UserProfile]) -> list[str]:
@@ -170,7 +176,17 @@ class LearnedRanker:
         feature_matrix = [
             extract_features(source, candidate, self.profile_embeddings) for candidate in candidates
         ]
-        scores = self._model.predict(feature_matrix)
+        # Match the named-DataFrame shape used during fit so sklearn's feature
+        # name check passes silently. Importing pandas lazily keeps the [dev]
+        # install untouched — only [ml] consumers ever hit this code path.
+        x_frame: Any
+        try:
+            import pandas as pd
+
+            x_frame = pd.DataFrame(feature_matrix, columns=list(FEATURE_NAMES))
+        except ImportError:
+            x_frame = feature_matrix
+        scores = self._model.predict(x_frame)
         ranked = sorted(
             zip(candidates, scores, strict=True),
             key=lambda pair: pair[1],
