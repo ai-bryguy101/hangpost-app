@@ -137,6 +137,44 @@ Prioritize work that demonstrates ML/AI engineering practice:
 real models, evaluation metrics (precision@k, NDCG@k), notebooks for EDA,
 experiment tracking, model/data cards, and CI.
 
+## HuggingFace Space (the live demo)
+
+The live demo lives at <https://huggingface.co/spaces/thisaiguybry/hangpost>
+and is served from [`space/`](space/) in this repo. It is **not**
+auto-deployed — every time `space/` changes (or the SHA pin in
+`space/requirements.txt` needs to point at newer package code), someone
+has to manually push to the HF Space's git remote and trigger a
+factory rebuild. The full operational playbook is in
+[`docs/DEPLOY_HF_SPACE.md`](docs/DEPLOY_HF_SPACE.md) — read it before
+you touch anything in `space/` or before debugging "the demo is
+broken."
+
+Two non-obvious gotchas worth remembering without reading the full doc:
+
+1. **HuggingFace caches the pip install layer.** A push that bumps the
+   SHA pin in `space/requirements.txt` is *not enough* on its own —
+   the cached install may keep serving the old package. After every
+   such push, click **Settings → Factory rebuild** in the HF web UI.
+2. **Never vendor `hangpost_matching/` into the Space repo.** Python
+   prefers a local package over a pip-installed one, so a leftover
+   vendored copy will shadow the GitHub-pinned install and produce
+   `AttributeError`s on fields the local copy doesn't have. The
+   deploy recipe wipes the Space repo before each `cp -a` for this
+   reason.
+
+## LLM-judge labels (Phase 3.5) — preserve them after generating
+
+The Anthropic-key labelling job (`scripts/label.py` / `gold_label.py`,
+called from `scripts/refresh_results.sh`) writes verdicts to
+`data/judge_labels.jsonl` (and optionally `data/judge_labels_gold.jsonl`).
+These files are **not gitignored**, but they're also **not committed
+yet**. Codespaces are ephemeral, so a labelling run done in a Codespace
+that isn't followed by `git add data/judge_labels*.jsonl && git commit
+&& git push` will be lost when the container is reclaimed. Always
+commit the JSONL after labelling — re-runs are idempotent (the cache
+is the JSONL file itself), so committing it makes future label runs
+free and gives the repo a reproducible artifact.
+
 ## Branch policy
 
 - Develop on a feature branch off `main`. The session prompt assigns the
