@@ -5,11 +5,43 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hangpost-matching"
 version = "0.1.0"
-description = "Transparent profile recommendation and ranking prototype"
+description = "Friend-recommendation ranker for a location-based social app — rules, sentence-transformer embeddings, and LightGBM learning-to-rank under one Ranker Protocol."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
+authors = [
+    {name = "ai-bryguy101"},
+]
+keywords = [
+    "recommendation-system",
+    "learning-to-rank",
+    "lightgbm",
+    "sentence-transformers",
+    "information-retrieval",
+    "ndcg",
+    "llm-as-judge",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Typing :: Typed",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/ai-bryguy101/hangpost-app"
+Repository = "https://github.com/ai-bryguy101/hangpost-app"
+Issues = "https://github.com/ai-bryguy101/hangpost-app/issues"
+"Live demo" = "https://huggingface.co/spaces/thisaiguybry/hangpost"
 
 [project.optional-dependencies]
 dev = [

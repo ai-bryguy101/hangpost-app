@@ -1,0 +1,40 @@
+# Dependabot keeps pip + GitHub Actions dependencies on patched versions.
+# It opens a PR per outdated package; the CI matrix runs against each PR so
+# regressions are caught before merge.
+#
+# Schedule is weekly to avoid PR-noise on a portfolio repo. Bump to "daily"
+# if a security advisory affects an upstream.
+
+version: 2
+updates:
+  # Python dependencies declared in pyproject.toml (dev, ml, serve, judge).
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  # GitHub Actions versions in .github/workflows/.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
