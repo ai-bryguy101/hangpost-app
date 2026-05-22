@@ -92,3 +92,16 @@ def test_rank_with_empty_candidate_list_returns_empty_results(
 
     assert response.status_code == 200
     assert response.json() == {"mode": "rules", "results": []}
+
+
+def test_rank_rejects_oversized_candidate_pool(client: TestClient) -> None:
+    # Default cap is 1000; send one more to trip the 413.
+    payload = {
+        "source": {"user_id": "u0", "age": 30},
+        "candidates": [{"user_id": f"u{i}"} for i in range(1001)],
+    }
+
+    response = client.post("/rank", json=payload)
+
+    assert response.status_code == 413
+    assert "Too many candidates" in response.json()["detail"]
