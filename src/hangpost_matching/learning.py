@@ -97,6 +97,12 @@ class LearnedRanker:
     broken by the model's continuous score.
     """
 
+    # Tags stamped into the saved payload so `load` can confirm it is reading
+    # a file this class produced (a sanity check against wrong/old files —
+    # NOT a security boundary; see `load`).
+    MODEL_SIGNATURE = "hangpost_learned_ranker"
+    MODEL_PAYLOAD_VERSION = 1
+
     def __init__(
         self,
         profile_embeddings: Mapping[str, Vector] | None = None,
@@ -229,6 +235,9 @@ class LearnedRanker:
             "profile_embeddings": self.profile_embeddings,
         }
         joblib.dump(payload, path)
+        # Sidecar digest so a later load can detect a *corrupted* file. This is
+        # an integrity check, not an authenticity one — anyone who can rewrite
+        # the model can rewrite the manifest too.
         self._write_checksum(path)
 
     @classmethod
@@ -236,10 +245,20 @@ class LearnedRanker:
         cls,
         path: str | Path,
         *,
-        allowed_dir: str | Path = "models",
-        verify_checksum: bool = True,
+        allowed_dir: str | Path | None = None,
+        verify_checksum: bool = False,
     ) -> LearnedRanker:
-        """Load a model + embedding map saved by `save`."""
+        """Load a model + embedding map saved by `save`.
+
+        SECURITY: this uses ``joblib`` which unpickles arbitrary Python —
+        loading an untrusted file can execute arbitrary code. Only load
+        models you produced or otherwise trust. ``allowed_dir`` and
+        ``verify_checksum`` are defense-in-depth (confine where models may
+        live, catch on-disk corruption); neither makes loading a malicious
+        file safe, since the signature/version tags below are read *after*
+        unpickling has already run. Both are opt-in so existing callers and
+        previously-saved models keep working.
+        """
         try:
             import joblib
         except ImportError as exc:
@@ -247,11 +266,12 @@ class LearnedRanker:
                 'joblib is required to load a LearnedRanker. Install with: pip install -e ".[ml]"'
             ) from exc
         model_path = Path(path).resolve()
-        allowed_root = Path(allowed_dir).resolve()
-        if allowed_root not in model_path.parents and model_path != allowed_root:
-            raise ValueError(
-                f"Refusing to load model outside allowlisted directory: {allowed_root}"
-            )
+        if allowed_dir is not None:
+            allowed_root = Path(allowed_dir).resolve()
+            if allowed_root not in model_path.parents and model_path != allowed_root:
+                raise ValueError(
+                    f"Refusing to load model outside allowlisted directory: {allowed_root}"
+                )
         if verify_checksum:
             cls._verify_checksum(model_path)
         payload = joblib.load(model_path)
@@ -294,5 +314,3 @@ class LearnedRanker:
         actual = hashlib.sha256(model_path.read_bytes()).hexdigest()
         if expected != actual:
             raise ValueError("Model checksum verification failed.")
-    MODEL_PAYLOAD_VERSION = 1
-    MODEL_SIGNATURE = "hangpost_learned_ranker"
