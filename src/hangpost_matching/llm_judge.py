@@ -52,11 +52,11 @@ from .embeddings import profile_to_text
 from .evaluation import Query
 from .models import UserProfile
 
-# Default model for the judge. Opus 4.7 is the most capable Claude model
-# and the highest-quality teacher — fine for offline labelling jobs where
-# latency is not user-facing. Override via the CLI to use a cheaper model
-# for high-volume runs.
-DEFAULT_MODEL = "claude-opus-4-7"
+# Default model for the judge. Sonnet 4.6 is the best balance of judgment
+# quality and cost for high-volume offline labelling — strong enough to be a
+# trustworthy teacher without Opus pricing. Override via the CLI to use Opus
+# for a higher-quality gold pass or Haiku for the cheapest bulk runs.
+DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # Verdicts >= this rating are treated as "yes, would become friends".
 # 0-4 scale: 0 = no chance, 4 = strong match. Threshold at 3 means we
@@ -67,7 +67,7 @@ DEFAULT_RELEVANCE_THRESHOLD = 3
 # The rubric the judge sees in its system prompt. Kept here as a module
 # constant so swapping prompts is a one-line code change and so the
 # prompt version is git-tracked alongside the verdicts that came from
-# it. Note: Opus 4.7's prompt-cache minimum is 4096 tokens, so this
+# it. Note: Sonnet 4.6's prompt-cache minimum is 2048 tokens, so this
 # rubric is below the cache threshold today. Caching will start firing
 # automatically if the rubric is fleshed out further.
 JUDGE_SYSTEM_PROMPT = """You are an expert grader for Hangpost, a location-based social media app

@@ -26,8 +26,6 @@ terms, profile age in app, time-of-day) is a matter of extending
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -235,10 +233,6 @@ class LearnedRanker:
             "profile_embeddings": self.profile_embeddings,
         }
         joblib.dump(payload, path)
-        # Sidecar digest so a later load can detect a *corrupted* file. This is
-        # an integrity check, not an authenticity one — anyone who can rewrite
-        # the model can rewrite the manifest too.
-        self._write_checksum(path)
 
     @classmethod
     def load(
@@ -246,18 +240,15 @@ class LearnedRanker:
         path: str | Path,
         *,
         allowed_dir: str | Path | None = None,
-        verify_checksum: bool = False,
     ) -> LearnedRanker:
         """Load a model + embedding map saved by `save`.
 
         SECURITY: this uses ``joblib`` which unpickles arbitrary Python —
         loading an untrusted file can execute arbitrary code. Only load
-        models you produced or otherwise trust. ``allowed_dir`` and
-        ``verify_checksum`` are defense-in-depth (confine where models may
-        live, catch on-disk corruption); neither makes loading a malicious
-        file safe, since the signature/version tags below are read *after*
-        unpickling has already run. Both are opt-in so existing callers and
-        previously-saved models keep working.
+        models you produced or otherwise trust. ``allowed_dir`` is opt-in
+        defense-in-depth (confine where models may live); it does not make
+        loading a malicious file safe, since the signature/version tags
+        below are read *after* unpickling has already run.
         """
         try:
             import joblib
@@ -272,8 +263,6 @@ class LearnedRanker:
                 raise ValueError(
                     f"Refusing to load model outside allowlisted directory: {allowed_root}"
                 )
-        if verify_checksum:
-            cls._verify_checksum(model_path)
         payload = joblib.load(model_path)
         if payload.get("signature") != cls.MODEL_SIGNATURE:
             raise ValueError("Model payload signature mismatch.")
@@ -283,34 +272,3 @@ class LearnedRanker:
             profile_embeddings=payload["profile_embeddings"],
             model=payload["model"],
         )
-
-    @classmethod
-    def _manifest_path(cls, model_path: Path) -> Path:
-        return model_path.with_suffix(f"{model_path.suffix}.sha256.json")
-
-    @classmethod
-    def _write_checksum(cls, model_path: str | Path) -> None:
-        path = Path(model_path)
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        manifest = {
-            "signature": cls.MODEL_SIGNATURE,
-            "payload_version": cls.MODEL_PAYLOAD_VERSION,
-            "sha256": digest,
-            "filename": path.name,
-        }
-        cls._manifest_path(path).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-
-    @classmethod
-    def _verify_checksum(cls, model_path: Path) -> None:
-        manifest_path = cls._manifest_path(model_path)
-        if not manifest_path.exists():
-            raise ValueError(f"Missing checksum manifest: {manifest_path}")
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest.get("signature") != cls.MODEL_SIGNATURE:
-            raise ValueError("Manifest signature mismatch.")
-        if manifest.get("payload_version") != cls.MODEL_PAYLOAD_VERSION:
-            raise ValueError("Manifest payload version mismatch.")
-        expected = manifest.get("sha256")
-        actual = hashlib.sha256(model_path.read_bytes()).hexdigest()
-        if expected != actual:
-            raise ValueError("Model checksum verification failed.")
