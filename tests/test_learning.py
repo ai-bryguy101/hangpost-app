@@ -137,3 +137,16 @@ def test_predictor_protocol_is_satisfied_by_stub() -> None:
         pass
 
     _accepts_predictor(_ScoreSumPredictor())
+
+
+def test_learned_ranker_raises_on_score_count_mismatch() -> None:
+    source = _toy_profile("source", 30, {"hiking"})
+    candidate = _toy_profile("c1", 31, {"hiking"})
+
+    class _BadPredictor:
+        def predict(self, x: Sequence[Sequence[float]]) -> Sequence[float]:
+            return [0.1, 0.2]
+
+    ranker = LearnedRanker(model=_BadPredictor())
+    with pytest.raises(ValueError, match="score count that does not match candidates"):
+        ranker.rank(source, [candidate])

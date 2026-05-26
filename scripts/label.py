@@ -124,7 +124,7 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default=JUDGE_DEFAULT_MODEL,
-        help="Claude model ID for the judge (default: claude-opus-4-7).",
+        help="Claude model ID for the judge (default: claude-sonnet-4-6).",
     )
     parser.add_argument(
         "--no-thinking",

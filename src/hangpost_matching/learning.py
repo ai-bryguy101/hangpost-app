@@ -74,6 +74,9 @@ def extract_features(
     ]
 
 
+ModelArrayLike = Sequence[Sequence[float]] | Any
+
+
 class Predictor(Protocol):
     """Anything with a `predict(X) -> Sequence[float]` method.
 
@@ -81,7 +84,7 @@ class Predictor(Protocol):
     that satisfy the same shape so they don't need lightgbm installed.
     """
 
-    def predict(self, x: Sequence[Sequence[float]]) -> Sequence[float]: ...
+    def predict(self, x: ModelArrayLike) -> Sequence[float]: ...
 
 
 class LearnedRanker:
@@ -91,6 +94,12 @@ class LearnedRanker:
     learns ordering, not absolute relevance. Ties between candidates are
     broken by the model's continuous score.
     """
+
+    # Tags stamped into the saved payload so `load` can confirm it is reading
+    # a file this class produced (a sanity check against wrong/old files —
+    # NOT a security boundary; see `load`).
+    MODEL_SIGNATURE = "hangpost_learned_ranker"
+    MODEL_PAYLOAD_VERSION = 1
 
     def __init__(
         self,
@@ -180,13 +189,21 @@ class LearnedRanker:
         # name check passes silently. Importing pandas lazily keeps the [dev]
         # install untouched — only [ml] consumers ever hit this code path.
         x_frame: Any
+        x_for_predict: ModelArrayLike = feature_matrix
         try:
             import pandas as pd
 
             x_frame = pd.DataFrame(feature_matrix, columns=list(FEATURE_NAMES))
+            if hasattr(self._model, "feature_name_"):
+                x_for_predict = x_frame
         except ImportError:
-            x_frame = feature_matrix
-        scores = self._model.predict(x_frame)
+            pass
+        scores = self._model.predict(x_for_predict)
+        if len(scores) != len(candidates):
+            raise ValueError(
+                "Predictor returned a score count that does not match candidates: "
+                f"{len(scores)} != {len(candidates)}"
+            )
         ranked = sorted(
             zip(candidates, scores, strict=True),
             key=lambda pair: pair[1],
@@ -209,21 +226,48 @@ class LearnedRanker:
         if self._model is None:
             raise RuntimeError("Cannot save a LearnedRanker that has not been fit.")
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(
-            {"model": self._model, "profile_embeddings": self.profile_embeddings},
-            path,
-        )
+        payload = {
+            "signature": self.MODEL_SIGNATURE,
+            "payload_version": self.MODEL_PAYLOAD_VERSION,
+            "model": self._model,
+            "profile_embeddings": self.profile_embeddings,
+        }
+        joblib.dump(payload, path)
 
     @classmethod
-    def load(cls, path: str | Path) -> LearnedRanker:
-        """Load a model + embedding map saved by `save`."""
+    def load(
+        cls,
+        path: str | Path,
+        *,
+        allowed_dir: str | Path | None = None,
+    ) -> LearnedRanker:
+        """Load a model + embedding map saved by `save`.
+
+        SECURITY: this uses ``joblib`` which unpickles arbitrary Python —
+        loading an untrusted file can execute arbitrary code. Only load
+        models you produced or otherwise trust. ``allowed_dir`` is opt-in
+        defense-in-depth (confine where models may live); it does not make
+        loading a malicious file safe, since the signature/version tags
+        below are read *after* unpickling has already run.
+        """
         try:
             import joblib
         except ImportError as exc:
             raise ImportError(
                 'joblib is required to load a LearnedRanker. Install with: pip install -e ".[ml]"'
             ) from exc
-        payload = joblib.load(path)
+        model_path = Path(path).resolve()
+        if allowed_dir is not None:
+            allowed_root = Path(allowed_dir).resolve()
+            if allowed_root not in model_path.parents and model_path != allowed_root:
+                raise ValueError(
+                    f"Refusing to load model outside allowlisted directory: {allowed_root}"
+                )
+        payload = joblib.load(model_path)
+        if payload.get("signature") != cls.MODEL_SIGNATURE:
+            raise ValueError("Model payload signature mismatch.")
+        if payload.get("payload_version") != cls.MODEL_PAYLOAD_VERSION:
+            raise ValueError("Model payload version mismatch.")
         return cls(
             profile_embeddings=payload["profile_embeddings"],
             model=payload["model"],
